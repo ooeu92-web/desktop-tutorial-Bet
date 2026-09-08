@@ -12,6 +12,11 @@
     "ネオンライト", "クリスタルウィング", "サウザンドドリーム", "レッドインパルス",
   ];
 
+  // 20レースに1回ほど現れる、必ず勝つ大穴の特別な馬
+  const HEARTBEAT_NAME = "ハートビート";
+  const HEARTBEAT_CHANCE = 1 / 20;
+  const HEARTBEAT_MIN_ODDS = 20;
+
   const JOCKEY_POOL = [
     { name: "C.ルメール", rank: "S" },
     { name: "武豊", rank: "S" },
@@ -53,6 +58,10 @@
   const CONDITION_LABEL = { up: "絶好調", flat: "普通", down: "不調" };
   const RANK_LABEL = { S: "Sランク", A: "Aランク", B: "Bランク", C: "Cランク" };
 
+  // 重馬場（雨天）の時にB・Cランク騎手の実際の走りを底上げする補正
+  const HEAVY_TRACK_JOCKEY_BONUS = { S: 1.0, A: 1.0, B: 1.12, C: 1.2 };
+  const RAIN_CHANCE = 0.2;
+
   const MIN_BET = 100;
   const START_BALANCE = 10000;
   const NUM_HORSES = 8;
@@ -61,6 +70,15 @@
   const WIN_ODDS_MAX = 120;
   const PLACE_ODDS_MIN = 1.2;
   const PLACE_ODDS_MAX = 40;
+  const UMAREN_ODDS_MIN = 1.5;
+  const UMAREN_ODDS_MAX = 300;
+  const MAX_SINGLE_DIGIT_ODDS_HORSES = 4;
+
+  const GAME_MODES = {
+    normal: { label: "一般人モード", goal: null },
+    gambler: { label: "ギャンブラーモード", goal: 100000 },
+    gamblerHard: { label: "ギャンブラーモードHARD", goal: 1000000 },
+  };
 
   // --- コース形状（楕円トラック）のジオメトリ ---
   // より広く大きいコースにし、ゴールは直線（ホームストレート）の左側に置くことで
@@ -105,10 +123,16 @@
   }
 
   const state = {
+    mode: null,
+    goalAmount: null,
+    attemptRaceCount: 0,
+    goalAchieved: false,
     balance: START_BALANCE,
     raceNumber: 1,
+    weather: { type: "clear", trackCondition: "good" },
     horses: [],
     selectedHorseId: null,
+    selectedHorseIds: [],
     tickets: [],
     raceRunning: false,
     raceFinished: false,
@@ -118,6 +142,11 @@
 
   const el = {
     balance: document.getElementById("balance"),
+    modeInfo: document.getElementById("modeInfo"),
+    lobbyScreen: document.getElementById("lobbyScreen"),
+    gameScreen: document.getElementById("gameScreen"),
+    lobbyReturnBtn: document.getElementById("lobbyReturnBtn"),
+    weatherBox: document.getElementById("weatherBox"),
     raceNumber: document.getElementById("raceNumber"),
     raceClass: document.getElementById("raceClass"),
     trackSvg: document.getElementById("trackSvg"),
@@ -127,9 +156,11 @@
     betAmount: document.getElementById("betAmount"),
     buyBtn: document.getElementById("buyBtn"),
     startBtn: document.getElementById("startBtn"),
+    watchOnlyBtn: document.getElementById("watchOnlyBtn"),
     skipBtn: document.getElementById("skipBtn"),
     nextBtn: document.getElementById("nextBtn"),
     restartBtn: document.getElementById("restartBtn"),
+    comboPreview: document.getElementById("comboPreview"),
     ticketInfo: document.getElementById("ticketInfo"),
     historyBody: document.getElementById("historyBody"),
   };
@@ -162,6 +193,11 @@
     return [1, 2, 3].map(() => 1 + Math.floor(Math.random() * NUM_HORSES));
   }
 
+  function pickWeather() {
+    const isRain = Math.random() < RAIN_CHANCE;
+    return isRain ? { type: "rain", trackCondition: "heavy" } : { type: "clear", trackCondition: "good" };
+  }
+
   // 直近のレースほど重く評価し、着順を強さの倍率（0.4〜1.6付近）に変換する
   function formMultFromLast3(last3) {
     const weights = [0.5, 0.3, 0.2];
@@ -177,20 +213,25 @@
   function generateHorses() {
     const names = shuffle(HORSE_POOL).slice(0, NUM_HORSES);
     const jockeys = shuffle(JOCKEY_POOL).slice(0, NUM_HORSES);
+    const heartbeatIndex = Math.random() < HEARTBEAT_CHANCE ? Math.floor(Math.random() * NUM_HORSES) : -1;
+    const isHeavyTrack = state.weather.trackCondition === "heavy";
 
     const raw = names.map((name, i) => {
-      const base = 20 + Math.random() * 90;
+      const isHeartbeat = i === heartbeatIndex;
+      const base = isHeartbeat ? 15 + Math.random() * 10 : 20 + Math.random() * 90;
       const last3 = randomLast3();
       const formMult = formMultFromLast3(last3);
       const jockey = jockeys[i];
       const jockeyMult = JOCKEY_RANK_MULT[jockey.rank];
       const condition = pickCondition();
       const conditionMult = CONDITION_MULT[condition];
+      const heavyTrackMult = isHeavyTrack ? HEAVY_TRACK_JOCKEY_BONUS[jockey.rank] : 1.0;
 
-      // 実際のレース結果を左右する「真の強さ」
-      const trueStrength = Math.max(3, base * formMult * jockeyMult * conditionMult);
+      // 実際のレース結果を左右する「真の強さ」（重馬場でのB・C騎手の巻き返しも反映）
+      const trueStrength = Math.max(3, base * formMult * jockeyMult * conditionMult * heavyTrackMult);
 
-      // 世間が見積もる強さ（騎手の看板を過大評価し、馬の調子の変化を過小評価する傾向 + 予想の誤差）
+      // 世間が見積もる強さ（騎手の看板を過大評価し、馬の調子の変化や馬場適性を
+      // 過小評価する傾向 + 予想の誤差）
       const marketJockeyMult = 1 + (jockeyMult - 1) * 1.6;
       const marketConditionMult = 1 + (conditionMult - 1) * 0.3;
       const noise = 1 + (Math.random() * 0.9 - 0.45);
@@ -199,14 +240,17 @@
         base * formMult * marketJockeyMult * marketConditionMult * noise
       );
 
-      return { name, last3, jockey, condition, trueStrength, marketStrength };
+      return { name: isHeartbeat ? HEARTBEAT_NAME : name, last3, jockey, condition, trueStrength, marketStrength, isHeartbeat };
     });
 
     const marketSum = raw.reduce((s, h) => s + h.marketStrength, 0);
 
-    return raw.map((h, i) => {
+    const horses = raw.map((h, i) => {
       const marketProb = h.marketStrength / marketSum;
-      const oddsWin = clamp(round1(PAYOUT_RATE / marketProb), WIN_ODDS_MIN, WIN_ODDS_MAX);
+      let oddsWin = clamp(round1(PAYOUT_RATE / marketProb), WIN_ODDS_MIN, WIN_ODDS_MAX);
+      if (h.isHeartbeat) {
+        oddsWin = Math.max(oddsWin, round1(HEARTBEAT_MIN_ODDS + Math.random() * 15));
+      }
       const oddsPlace = clamp(round1(1 + (oddsWin - 1) / 2.8), PLACE_ODDS_MIN, PLACE_ODDS_MAX);
       return {
         id: i + 1,
@@ -217,10 +261,39 @@
         jockeyRank: h.jockey.rank,
         condition: h.condition,
         trueStrength: h.trueStrength,
+        marketProb,
         oddsWin,
         oddsPlace,
+        isHeartbeat: h.isHeartbeat,
       };
     });
+
+    enforceSingleDigitOddsCap(horses);
+    return horses;
+  }
+
+  // 単勝オッズが1桁（10倍未満）になる馬は最大4頭までに制限する
+  function enforceSingleDigitOddsCap(horses) {
+    const candidates = horses.filter((h) => !h.isHeartbeat);
+    const sortedByOdds = [...candidates].sort((a, b) => a.oddsWin - b.oddsWin);
+    let singleDigitCount = 0;
+    sortedByOdds.forEach((h) => {
+      if (h.oddsWin < 10) {
+        singleDigitCount++;
+        if (singleDigitCount > MAX_SINGLE_DIGIT_ODDS_HORSES) {
+          h.oddsWin = clamp(round1(10 + Math.random() * 10), 10, WIN_ODDS_MAX);
+          h.oddsPlace = clamp(round1(1 + (h.oddsWin - 1) / 2.8), PLACE_ODDS_MIN, PLACE_ODDS_MAX);
+        }
+      }
+    });
+  }
+
+  // 馬連（1着・2着を着順不問で当てる）の組み合わせオッズ
+  function umarenOdds(horseA, horseB) {
+    const pA = horseA.marketProb;
+    const pB = horseB.marketProb;
+    const pairProb = pA * (pB / (1 - pA)) + pB * (pA / (1 - pB));
+    return clamp(round1(PAYOUT_RATE / pairProb), UMAREN_ODDS_MIN, UMAREN_ODDS_MAX);
   }
 
   function formatMoney(n) {
@@ -231,16 +304,41 @@
     el.balance.textContent = formatMoney(state.balance);
   }
 
+  function updateModeInfo() {
+    if (!state.mode || state.mode === "normal") {
+      el.modeInfo.hidden = true;
+      return;
+    }
+    el.modeInfo.hidden = false;
+    const goalLabel = formatMoney(state.goalAmount) + "円";
+    const status = state.goalAchieved ? "🎉達成済み" : `${state.attemptRaceCount}レース経過`;
+    el.modeInfo.textContent = `🎯 ${GAME_MODES[state.mode].label}：目標${goalLabel}（${status}）`;
+  }
+
+  function isUmarenMode() {
+    return el.betType.value === "umaren";
+  }
+
+  function isHorseSelected(horseId) {
+    return isUmarenMode() ? state.selectedHorseIds.includes(horseId) : state.selectedHorseId === horseId;
+  }
+
   function renderHorseTable() {
     el.horseTableBody.innerHTML = "";
+    const umaren = isUmarenMode();
     state.horses.forEach((horse) => {
       const tr = document.createElement("tr");
       tr.dataset.horseId = horse.id;
-      if (state.selectedHorseId === horse.id) tr.classList.add("selected");
+      if (isHorseSelected(horse.id)) tr.classList.add("selected");
+      if (horse.isHeartbeat) tr.classList.add("heartbeat-row");
+
+      const selectInput = umaren
+        ? `<input type="checkbox" ${isHorseSelected(horse.id) ? "checked" : ""}>`
+        : `<input type="radio" name="horseSelect" ${isHorseSelected(horse.id) ? "checked" : ""}>`;
 
       tr.innerHTML = `
         <td>${horse.lane}</td>
-        <td>${horse.name}</td>
+        <td>${horse.name}${horse.isHeartbeat ? ' <span class="heartbeat-badge">💓</span>' : ""}</td>
         <td>
           ${horse.jockeyName}
           <span class="rank-badge rank-${horse.jockeyRank}" title="${RANK_LABEL[horse.jockeyRank]}">${horse.jockeyRank}</span>
@@ -249,17 +347,43 @@
         <td class="cond-${horse.condition}">${CONDITION_ICON[horse.condition]} ${CONDITION_LABEL[horse.condition]}</td>
         <td>${horse.oddsWin.toFixed(1)}倍</td>
         <td>${horse.oddsPlace.toFixed(1)}倍</td>
-        <td><input type="radio" name="horseSelect" ${state.selectedHorseId === horse.id ? "checked" : ""}></td>
+        <td>${selectInput}</td>
       `;
 
       tr.addEventListener("click", () => {
         if (state.raceRunning || state.raceFinished) return;
-        state.selectedHorseId = horse.id;
+        if (isUmarenMode()) {
+          const idx = state.selectedHorseIds.indexOf(horse.id);
+          if (idx >= 0) {
+            state.selectedHorseIds.splice(idx, 1);
+          } else if (state.selectedHorseIds.length < 2) {
+            state.selectedHorseIds.push(horse.id);
+          } else {
+            return;
+          }
+        } else {
+          state.selectedHorseId = horse.id;
+        }
         renderHorseTable();
+        renderComboPreview();
       });
 
       el.horseTableBody.appendChild(tr);
     });
+  }
+
+  function renderComboPreview() {
+    if (!isUmarenMode()) {
+      el.comboPreview.textContent = "";
+      return;
+    }
+    if (state.selectedHorseIds.length < 2) {
+      el.comboPreview.textContent = `馬連は2頭選択してください（現在${state.selectedHorseIds.length}頭選択中）`;
+      return;
+    }
+    const [a, b] = state.selectedHorseIds.map((id) => state.horses.find((h) => h.id === id));
+    const odds = umarenOdds(a, b);
+    el.comboPreview.textContent = `馬連候補: ${a.name} － ${b.name}　予想オッズ ${odds.toFixed(1)}倍`;
   }
 
   function buildTrackDefs() {
@@ -275,6 +399,7 @@
   }
 
   function buildTrackBackground() {
+    const isHeavy = state.weather.trackCondition === "heavy";
     const outerFill = stadiumPath(TRACK.outerRailInset - 4);
     const innerFill = stadiumPath(TRACK.innerRailInset + 4);
     const outerRail = stadiumPath(TRACK.outerRailInset);
@@ -295,8 +420,10 @@
     const startPoint = geometryAt(laneInset(Math.ceil(NUM_HORSES / 2)));
     const startLabel = `<text x="${startPoint.xLeft - 6}" y="${startPoint.yTop - 12}" text-anchor="end" font-size="14" fill="#ffe066" font-weight="bold">START</text>`;
 
+    const trackColor = isHeavy ? "#8a6f4a" : "#c9a86a";
+
     return `
-      <path d="${outerFill}" fill="#c9a86a"/>
+      <path d="${outerFill}" fill="${trackColor}"/>
       <path d="${innerFill}" fill="#2f7d3c"/>
       ${dividers.join("")}
       <path d="${outerRail}" fill="none" stroke="#ffffff" stroke-width="2.5"/>
@@ -319,27 +446,40 @@
     el.trackSvg.innerHTML = buildTrackDefs() + buildTrackBackground() + buildHorseMarkers();
   }
 
+  function renderWeather() {
+    const isHeavy = state.weather.trackCondition === "heavy";
+    el.weatherBox.textContent = isHeavy ? "🌧️ 重馬場" : "☀️ 良馬場";
+    el.weatherBox.classList.toggle("weather-heavy", isHeavy);
+  }
+
+  function ticketLabel(ticket) {
+    if (ticket.type === "umaren") {
+      const names = ticket.horseIds.map((id) => state.horses.find((h) => h.id === id).name);
+      return { typeLabel: "馬連", horseLabel: names.join(" － ") };
+    }
+    const horse = state.horses.find((h) => h.id === ticket.horseId);
+    return { typeLabel: ticket.type === "win" ? "単勝" : "複勝", horseLabel: horse.name };
+  }
+
   function renderTicketInfo() {
     if (state.tickets.length === 0) {
       el.ticketInfo.textContent = "";
       return;
     }
     const lines = state.tickets.map((t) => {
-      const horse = state.horses.find((h) => h.id === t.horseId);
-      const typeLabel = t.type === "win" ? "単勝" : "複勝";
-      return `[${typeLabel}] ${horse.name} ${formatMoney(t.amount)}円`;
+      const { typeLabel, horseLabel } = ticketLabel(t);
+      return `[${typeLabel}] ${horseLabel} ${formatMoney(t.amount)}円`;
     });
     el.ticketInfo.innerHTML = "購入済み馬券: " + lines.join(" / ");
   }
 
-  function addHistoryRow(raceNumber, ticket, horse, resultText, payout) {
+  function addHistoryRow(raceNumber, typeLabel, horseLabel, amount, resultText, payout) {
     const tr = document.createElement("tr");
-    const typeLabel = ticket.type === "win" ? "単勝" : "複勝";
     tr.innerHTML = `
       <td>第${raceNumber}R</td>
       <td>${typeLabel}</td>
-      <td>${horse.name}</td>
-      <td>${formatMoney(ticket.amount)}円</td>
+      <td>${horseLabel}</td>
+      <td>${formatMoney(amount)}円</td>
       <td class="${payout > 0 ? "result-win" : "result-lose"}">${resultText}</td>
       <td>${payout > 0 ? formatMoney(payout) + "円" : "-"}</td>
     `;
@@ -352,8 +492,10 @@
       return;
     }
 
+    state.weather = pickWeather();
     state.horses = generateHorses();
     state.selectedHorseId = null;
+    state.selectedHorseIds = [];
     state.tickets = [];
     state.raceRunning = false;
     state.raceFinished = false;
@@ -361,11 +503,14 @@
     el.raceNumber.textContent = state.raceNumber;
     el.raceClass.textContent = getRaceClass(state.raceNumber).name;
     el.startBtn.disabled = true;
+    el.watchOnlyBtn.disabled = false;
     el.skipBtn.disabled = true;
     el.nextBtn.disabled = true;
     el.restartBtn.hidden = true;
     updateBuyAvailability();
+    renderWeather();
     renderHorseTable();
+    renderComboPreview();
     renderTrack();
     renderTicketInfo();
   }
@@ -374,6 +519,7 @@
     el.raceMessage.textContent = `所持金が最低購入額（${MIN_BET}円）を下回りました。ゲームオーバーです。`;
     el.buyBtn.disabled = true;
     el.startBtn.disabled = true;
+    el.watchOnlyBtn.disabled = true;
     el.skipBtn.disabled = true;
     el.nextBtn.disabled = true;
     el.restartBtn.hidden = false;
@@ -382,8 +528,11 @@
   function restartGame() {
     state.balance = START_BALANCE;
     state.raceNumber = 1;
+    state.attemptRaceCount = 0;
+    state.goalAchieved = false;
     el.historyBody.innerHTML = "";
     renderBalance();
+    updateModeInfo();
     resetForNewRace();
   }
 
@@ -395,10 +544,7 @@
   }
 
   function buyTicket() {
-    if (state.selectedHorseId === null) {
-      alert("馬を選択してください");
-      return;
-    }
+    const betType = el.betType.value;
     const amount = parseInt(el.betAmount.value, 10);
     if (!Number.isFinite(amount) || amount < MIN_BET) {
       alert(`最低${MIN_BET}円から購入できます`);
@@ -409,12 +555,25 @@
       return;
     }
 
-    state.balance -= amount;
-    state.tickets.push({
-      horseId: state.selectedHorseId,
-      type: el.betType.value,
-      amount,
-    });
+    if (betType === "umaren") {
+      if (state.selectedHorseIds.length !== 2) {
+        alert("馬連は2頭選択してください");
+        return;
+      }
+      const [idA, idB] = state.selectedHorseIds;
+      const horseA = state.horses.find((h) => h.id === idA);
+      const horseB = state.horses.find((h) => h.id === idB);
+      const odds = umarenOdds(horseA, horseB);
+      state.balance -= amount;
+      state.tickets.push({ type: "umaren", horseIds: [idA, idB], amount, odds });
+    } else {
+      if (state.selectedHorseId === null) {
+        alert("馬を選択してください");
+        return;
+      }
+      state.balance -= amount;
+      state.tickets.push({ type: betType, horseId: state.selectedHorseId, amount });
+    }
 
     renderBalance();
     renderTicketInfo();
@@ -423,13 +582,17 @@
   }
 
   function computeFinishOrder() {
+    const heartbeat = state.horses.find((h) => h.isHeartbeat);
     const { varMin, varMax } = getRaceClass(state.raceNumber);
-    const performances = state.horses.map((h) => ({
+    const contenders = state.horses.filter((h) => !heartbeat || h.id !== heartbeat.id);
+    const performances = contenders.map((h) => ({
       id: h.id,
       score: h.trueStrength * (varMin + Math.random() * (varMax - varMin)),
     }));
     performances.sort((a, b) => b.score - a.score);
-    return performances.map((p) => p.id);
+    const order = performances.map((p) => p.id);
+    if (heartbeat) order.unshift(heartbeat.id);
+    return order;
   }
 
   const RACE_BASE_TIME = 21.0;
@@ -439,6 +602,7 @@
     state.raceRunning = true;
     el.buyBtn.disabled = true;
     el.startBtn.disabled = true;
+    el.watchOnlyBtn.disabled = true;
     el.skipBtn.disabled = false;
     el.raceMessage.textContent = "レース中...";
 
@@ -490,32 +654,47 @@
 
     const winnerHorse = state.horses.find((h) => h.id === finishOrder[0]);
     el.raceMessage.textContent = `🏆 1着: ${winnerHorse.name}！`;
+    if (winnerHorse.isHeartbeat) {
+      el.raceMessage.textContent += " 💓 大穴の奇跡的な激走！";
+    }
 
     let totalPayout = 0;
     state.tickets.forEach((ticket) => {
-      const horse = state.horses.find((h) => h.id === ticket.horseId);
-      const rank = rankById.get(ticket.horseId);
+      const { typeLabel, horseLabel } = ticketLabel(ticket);
       let payout = 0;
       let resultText = "";
 
-      if (ticket.type === "win") {
-        if (rank === 1) {
-          payout = Math.round(ticket.amount * horse.oddsWin);
-          resultText = "的中 (1着)";
+      if (ticket.type === "umaren") {
+        const top2 = [finishOrder[0], finishOrder[1]];
+        const hit = ticket.horseIds.every((id) => top2.includes(id));
+        if (hit) {
+          payout = Math.round(ticket.amount * ticket.odds);
+          resultText = "的中";
         } else {
-          resultText = `外れ (${rank}着)`;
+          resultText = "外れ";
         }
       } else {
-        if (rank <= 3) {
-          payout = Math.round(ticket.amount * horse.oddsPlace);
-          resultText = `的中 (${rank}着)`;
+        const rank = rankById.get(ticket.horseId);
+        const horse = state.horses.find((h) => h.id === ticket.horseId);
+        if (ticket.type === "win") {
+          if (rank === 1) {
+            payout = Math.round(ticket.amount * horse.oddsWin);
+            resultText = "的中 (1着)";
+          } else {
+            resultText = `外れ (${rank}着)`;
+          }
         } else {
-          resultText = `外れ (${rank}着)`;
+          if (rank <= 3) {
+            payout = Math.round(ticket.amount * horse.oddsPlace);
+            resultText = `的中 (${rank}着)`;
+          } else {
+            resultText = `外れ (${rank}着)`;
+          }
         }
       }
 
       totalPayout += payout;
-      addHistoryRow(state.raceNumber, ticket, horse, resultText, payout);
+      addHistoryRow(state.raceNumber, typeLabel, horseLabel, ticket.amount, resultText, payout);
     });
 
     state.balance += totalPayout;
@@ -525,8 +704,18 @@
       el.raceMessage.textContent += ` 払戻合計 ${formatMoney(totalPayout)}円！`;
     }
 
+    if (state.mode && state.mode !== "normal") {
+      state.attemptRaceCount++;
+      if (!state.goalAchieved && state.balance >= state.goalAmount) {
+        state.goalAchieved = true;
+        el.raceMessage.textContent += ` 🎉🏆 ${state.attemptRaceCount}レースで目標金額${formatMoney(state.goalAmount)}円を達成しました！`;
+      }
+      updateModeInfo();
+    }
+
     el.nextBtn.disabled = false;
     el.buyBtn.disabled = true;
+    el.watchOnlyBtn.disabled = true;
     el.skipBtn.disabled = true;
     state.currentFinishOrder = null;
   }
@@ -537,12 +726,53 @@
     resetForNewRace();
   }
 
+  function startWatchOnly() {
+    if (state.raceRunning || state.raceFinished) return;
+    runRace();
+  }
+
+  function selectMode(mode) {
+    state.mode = mode;
+    state.goalAmount = GAME_MODES[mode].goal;
+    state.attemptRaceCount = 0;
+    state.goalAchieved = false;
+    state.balance = START_BALANCE;
+    state.raceNumber = 1;
+    el.historyBody.innerHTML = "";
+    el.lobbyScreen.hidden = true;
+    el.gameScreen.hidden = false;
+    el.lobbyReturnBtn.hidden = false;
+    renderBalance();
+    updateModeInfo();
+    resetForNewRace();
+  }
+
+  function returnToLobby() {
+    if (state.raceTimeoutId !== null) {
+      clearTimeout(state.raceTimeoutId);
+      state.raceTimeoutId = null;
+    }
+    state.mode = null;
+    el.gameScreen.hidden = true;
+    el.lobbyScreen.hidden = false;
+    el.lobbyReturnBtn.hidden = true;
+    el.modeInfo.hidden = true;
+  }
+
   el.buyBtn.addEventListener("click", buyTicket);
   el.startBtn.addEventListener("click", runRace);
+  el.watchOnlyBtn.addEventListener("click", startWatchOnly);
   el.skipBtn.addEventListener("click", skipRace);
   el.nextBtn.addEventListener("click", nextRace);
   el.restartBtn.addEventListener("click", restartGame);
-
-  resetForNewRace();
-  renderBalance();
+  el.lobbyReturnBtn.addEventListener("click", returnToLobby);
+  el.betType.addEventListener("change", () => {
+    state.selectedHorseId = null;
+    state.selectedHorseIds = [];
+    renderHorseTable();
+    renderComboPreview();
+  });
+  document.querySelectorAll(".mode-select-btn").forEach((btn) => {
+    btn.addEventListener("click", () => selectMode(btn.dataset.mode));
+  });
 })();
