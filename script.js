@@ -10,12 +10,18 @@
     "スパークリングスター", "タイフーンゲイル", "エターナルフレア", "ジェットストリーム",
     "パープルレイン", "ゴールドラッシュ", "シルクロード", "ワイルドカード",
     "ネオンライト", "クリスタルウィング", "サウザンドドリーム", "レッドインパルス",
+    "リーヅモピンフ", "ハラキリドライブ", "インパクトラッシュ",
   ];
 
   // 20レースに1回ほど現れる、必ず勝つ大穴の特別な馬
   const HEARTBEAT_NAME = "ハートビート";
   const HEARTBEAT_CHANCE = 1 / 20;
   const HEARTBEAT_MIN_ODDS = 20;
+
+  // 10レースに1回ほど現れる、必ず4着になる特別な馬（演出などは特になし）
+  const FRONTIER_NAME = "フロンティア";
+  const FRONTIER_CHANCE = 1 / 10;
+  const FRONTIER_FIXED_RANK = 4;
 
   const JOCKEY_POOL = [
     { name: "C.ルメール", rank: "S" },
@@ -26,9 +32,28 @@
     { name: "丹内祐二", rank: "B" },
     { name: "鮫島克駿", rank: "B" },
     { name: "横山武史", rank: "B" },
+    { name: "西村淳也", rank: "B" },
+    { name: "横山和生", rank: "B" },
+    { name: "荻野極", rank: "B" },
     { name: "今村聖奈", rank: "C" },
     { name: "坂井瑠星", rank: "C" },
   ];
+
+  // 出現率が極端に低い特別な騎手（毎レースの通常抽選とは別枠で判定する）
+  const RARE_JOCKEYS = [
+    { name: "J.モレイラ", rank: "S", chance: 1 / 18 },
+    { name: "F.デットーリ", rank: "S", chance: 1 / 50 },
+  ];
+
+  function pickJockeysForRace() {
+    const chosen = [];
+    RARE_JOCKEYS.forEach((rj) => {
+      if (Math.random() < rj.chance) chosen.push({ name: rj.name, rank: rj.rank });
+    });
+    const regularNeeded = NUM_HORSES - chosen.length;
+    const regularPicked = shuffle(JOCKEY_POOL).slice(0, regularNeeded);
+    return shuffle([...chosen, ...regularPicked]);
+  }
 
   // レース番号(1〜12)ごとのクラス設定。未勝利は波乱（穴馬台頭）が起きやすいよう
   // 実際のレース結果の分散（varMin〜varMax）を広めに取る
@@ -72,12 +97,13 @@
   const PLACE_ODDS_MAX = 40;
   const UMAREN_ODDS_MIN = 1.5;
   const UMAREN_ODDS_MAX = 300;
-  const MAX_SINGLE_DIGIT_ODDS_HORSES = 4;
+  const MAX_SINGLE_DIGIT_ODDS_HORSES = 5;
 
   const GAME_MODES = {
     normal: { label: "一般人モード", goal: null },
     gambler: { label: "ギャンブラーモード", goal: 100000 },
     gamblerHard: { label: "ギャンブラーモードHARD", goal: 1000000 },
+    infinite: { label: "資金無限モード", goal: null, infinite: true },
   };
 
   // --- コース形状（楕円トラック）のジオメトリ ---
@@ -127,6 +153,10 @@
     goalAmount: null,
     attemptRaceCount: 0,
     goalAchieved: false,
+    totalWagered: 0,
+    totalPayout: 0,
+    totalTickets: 0,
+    totalHits: 0,
     balance: START_BALANCE,
     raceNumber: 1,
     weather: { type: "clear", trackCondition: "good" },
@@ -151,6 +181,7 @@
     raceClass: document.getElementById("raceClass"),
     trackSvg: document.getElementById("trackSvg"),
     raceMessage: document.getElementById("raceMessage"),
+    myResultInfo: document.getElementById("myResultInfo"),
     horseTableBody: document.getElementById("horseTableBody"),
     betType: document.getElementById("betType"),
     betAmount: document.getElementById("betAmount"),
@@ -212,12 +243,15 @@
 
   function generateHorses() {
     const names = shuffle(HORSE_POOL).slice(0, NUM_HORSES);
-    const jockeys = shuffle(JOCKEY_POOL).slice(0, NUM_HORSES);
+    const jockeys = pickJockeysForRace();
     const heartbeatIndex = Math.random() < HEARTBEAT_CHANCE ? Math.floor(Math.random() * NUM_HORSES) : -1;
+    let frontierIndex = Math.random() < FRONTIER_CHANCE ? Math.floor(Math.random() * NUM_HORSES) : -1;
+    if (frontierIndex === heartbeatIndex) frontierIndex = -1;
     const isHeavyTrack = state.weather.trackCondition === "heavy";
 
     const raw = names.map((name, i) => {
       const isHeartbeat = i === heartbeatIndex;
+      const isFrontier = i === frontierIndex;
       const base = isHeartbeat ? 15 + Math.random() * 10 : 20 + Math.random() * 90;
       const last3 = randomLast3();
       const formMult = formMultFromLast3(last3);
@@ -240,7 +274,11 @@
         base * formMult * marketJockeyMult * marketConditionMult * noise
       );
 
-      return { name: isHeartbeat ? HEARTBEAT_NAME : name, last3, jockey, condition, trueStrength, marketStrength, isHeartbeat };
+      let horseName = name;
+      if (isHeartbeat) horseName = HEARTBEAT_NAME;
+      else if (isFrontier) horseName = FRONTIER_NAME;
+
+      return { name: horseName, last3, jockey, condition, trueStrength, marketStrength, isHeartbeat, isFrontier };
     });
 
     const marketSum = raw.reduce((s, h) => s + h.marketStrength, 0);
@@ -265,6 +303,7 @@
         oddsWin,
         oddsPlace,
         isHeartbeat: h.isHeartbeat,
+        isFrontier: h.isFrontier,
       };
     });
 
@@ -301,7 +340,7 @@
   }
 
   function renderBalance() {
-    el.balance.textContent = formatMoney(state.balance);
+    el.balance.textContent = state.mode === "infinite" ? "∞" : formatMoney(state.balance);
   }
 
   function updateModeInfo() {
@@ -310,6 +349,12 @@
       return;
     }
     el.modeInfo.hidden = false;
+    if (state.mode === "infinite") {
+      const recoveryRate = state.totalWagered > 0 ? (state.totalPayout / state.totalWagered) * 100 : 0;
+      const hitRate = state.totalTickets > 0 ? (state.totalHits / state.totalTickets) * 100 : 0;
+      el.modeInfo.textContent = `🎯 ${GAME_MODES.infinite.label}：回収率 ${recoveryRate.toFixed(1)}%／的中率 ${hitRate.toFixed(1)}%（${state.attemptRaceCount}レース経過）`;
+      return;
+    }
     const goalLabel = formatMoney(state.goalAmount) + "円";
     const status = state.goalAchieved ? "🎉達成済み" : `${state.attemptRaceCount}レース経過`;
     el.modeInfo.textContent = `🎯 ${GAME_MODES[state.mode].label}：目標${goalLabel}（${status}）`;
@@ -330,7 +375,6 @@
       const tr = document.createElement("tr");
       tr.dataset.horseId = horse.id;
       if (isHorseSelected(horse.id)) tr.classList.add("selected");
-      if (horse.isHeartbeat) tr.classList.add("heartbeat-row");
 
       const selectInput = umaren
         ? `<input type="checkbox" ${isHorseSelected(horse.id) ? "checked" : ""}>`
@@ -338,7 +382,7 @@
 
       tr.innerHTML = `
         <td>${horse.lane}</td>
-        <td>${horse.name}${horse.isHeartbeat ? ' <span class="heartbeat-badge">💓</span>' : ""}</td>
+        <td>${horse.name}</td>
         <td>
           ${horse.jockeyName}
           <span class="rank-badge rank-${horse.jockeyRank}" title="${RANK_LABEL[horse.jockeyRank]}">${horse.jockeyRank}</span>
@@ -424,7 +468,7 @@
 
     return `
       <path d="${outerFill}" fill="${trackColor}"/>
-      <path d="${innerFill}" fill="#2f7d3c"/>
+      <path d="${innerFill}" fill="#1a5c31"/>
       ${dividers.join("")}
       <path d="${outerRail}" fill="none" stroke="#ffffff" stroke-width="2.5"/>
       <path d="${innerRail}" fill="none" stroke="#ffffff" stroke-width="2.5"/>
@@ -446,6 +490,27 @@
     el.trackSvg.innerHTML = buildTrackDefs() + buildTrackBackground() + buildHorseMarkers();
   }
 
+  function renderMyResult(finishOrder) {
+    if (state.tickets.length === 0) {
+      el.myResultInfo.textContent = "";
+      return;
+    }
+    const rankById = new Map();
+    finishOrder.forEach((id, idx) => rankById.set(id, idx + 1));
+    const seen = new Set();
+    const lines = [];
+    state.tickets.forEach((ticket) => {
+      const ids = ticket.type === "umaren" ? ticket.horseIds : [ticket.horseId];
+      ids.forEach((id) => {
+        if (seen.has(id)) return;
+        seen.add(id);
+        const horse = state.horses.find((h) => h.id === id);
+        lines.push(`${horse.name}: ${rankById.get(id)}着`);
+      });
+    });
+    el.myResultInfo.textContent = "あなたの馬の着順: " + lines.join(" / ");
+  }
+
   function renderWeather() {
     const isHeavy = state.weather.trackCondition === "heavy";
     el.weatherBox.textContent = isHeavy ? "🌧️ 重馬場" : "☀️ 良馬場";
@@ -455,7 +520,7 @@
   function ticketLabel(ticket) {
     if (ticket.type === "umaren") {
       const names = ticket.horseIds.map((id) => state.horses.find((h) => h.id === id).name);
-      return { typeLabel: "馬連", horseLabel: names.join(" － ") };
+      return { typeLabel: "馬連", horseLabel: `${names.join(" － ")}（${ticket.odds.toFixed(1)}倍）` };
     }
     const horse = state.horses.find((h) => h.id === ticket.horseId);
     return { typeLabel: ticket.type === "win" ? "単勝" : "複勝", horseLabel: horse.name };
@@ -487,7 +552,7 @@
   }
 
   function resetForNewRace() {
-    if (state.balance < MIN_BET) {
+    if (state.mode !== "infinite" && state.balance < MIN_BET) {
       showGameOver();
       return;
     }
@@ -500,6 +565,7 @@
     state.raceRunning = false;
     state.raceFinished = false;
     el.raceMessage.textContent = "馬を選んで馬券を購入してください";
+    el.myResultInfo.textContent = "";
     el.raceNumber.textContent = state.raceNumber;
     el.raceClass.textContent = getRaceClass(state.raceNumber).name;
     el.startBtn.disabled = true;
@@ -530,6 +596,10 @@
     state.raceNumber = 1;
     state.attemptRaceCount = 0;
     state.goalAchieved = false;
+    state.totalWagered = 0;
+    state.totalPayout = 0;
+    state.totalTickets = 0;
+    state.totalHits = 0;
     el.historyBody.innerHTML = "";
     renderBalance();
     updateModeInfo();
@@ -539,7 +609,7 @@
   // 購入ボタンの活性/非活性のみを扱う。ゲームオーバー判定はここでは行わない
   // （全額ベットした直後にレース観戦できなくなる不具合を防ぐため）
   function updateBuyAvailability() {
-    const canAfford = state.balance >= MIN_BET;
+    const canAfford = state.mode === "infinite" || state.balance >= MIN_BET;
     el.buyBtn.disabled = state.raceRunning || state.raceFinished || !canAfford;
   }
 
@@ -550,7 +620,7 @@
       alert(`最低${MIN_BET}円から購入できます`);
       return;
     }
-    if (amount > state.balance) {
+    if (amount > state.balance && state.mode !== "infinite") {
       alert("所持金が不足しています");
       return;
     }
@@ -575,6 +645,9 @@
       state.tickets.push({ type: betType, horseId: state.selectedHorseId, amount });
     }
 
+    state.totalWagered += amount;
+    state.totalTickets++;
+
     renderBalance();
     renderTicketInfo();
     updateBuyAvailability();
@@ -583,15 +656,24 @@
 
   function computeFinishOrder() {
     const heartbeat = state.horses.find((h) => h.isHeartbeat);
+    const frontier = state.horses.find((h) => h.isFrontier);
     const { varMin, varMax } = getRaceClass(state.raceNumber);
-    const contenders = state.horses.filter((h) => !heartbeat || h.id !== heartbeat.id);
+    const contenders = state.horses.filter((h) => h !== heartbeat && h !== frontier);
     const performances = contenders.map((h) => ({
       id: h.id,
       score: h.trueStrength * (varMin + Math.random() * (varMax - varMin)),
     }));
     performances.sort((a, b) => b.score - a.score);
-    const order = performances.map((p) => p.id);
-    if (heartbeat) order.unshift(heartbeat.id);
+    const freeOrder = performances.map((p) => p.id);
+
+    const order = new Array(state.horses.length).fill(null);
+    if (heartbeat) order[0] = heartbeat.id;
+    if (frontier) order[FRONTIER_FIXED_RANK - 1] = frontier.id;
+
+    let freeIdx = 0;
+    for (let i = 0; i < order.length; i++) {
+      if (order[i] === null) order[i] = freeOrder[freeIdx++];
+    }
     return order;
   }
 
@@ -654,9 +736,7 @@
 
     const winnerHorse = state.horses.find((h) => h.id === finishOrder[0]);
     el.raceMessage.textContent = `🏆 1着: ${winnerHorse.name}！`;
-    if (winnerHorse.isHeartbeat) {
-      el.raceMessage.textContent += " 💓 大穴の奇跡的な激走！";
-    }
+    renderMyResult(finishOrder);
 
     let totalPayout = 0;
     state.tickets.forEach((ticket) => {
@@ -693,10 +773,12 @@
         }
       }
 
+      if (payout > 0) state.totalHits++;
       totalPayout += payout;
       addHistoryRow(state.raceNumber, typeLabel, horseLabel, ticket.amount, resultText, payout);
     });
 
+    state.totalPayout += totalPayout;
     state.balance += totalPayout;
     renderBalance();
 
@@ -706,7 +788,7 @@
 
     if (state.mode && state.mode !== "normal") {
       state.attemptRaceCount++;
-      if (!state.goalAchieved && state.balance >= state.goalAmount) {
+      if (state.goalAmount && !state.goalAchieved && state.balance >= state.goalAmount) {
         state.goalAchieved = true;
         el.raceMessage.textContent += ` 🎉🏆 ${state.attemptRaceCount}レースで目標金額${formatMoney(state.goalAmount)}円を達成しました！`;
       }
@@ -736,6 +818,10 @@
     state.goalAmount = GAME_MODES[mode].goal;
     state.attemptRaceCount = 0;
     state.goalAchieved = false;
+    state.totalWagered = 0;
+    state.totalPayout = 0;
+    state.totalTickets = 0;
+    state.totalHits = 0;
     state.balance = START_BALANCE;
     state.raceNumber = 1;
     el.historyBody.innerHTML = "";
