@@ -18,13 +18,13 @@
 
   <section class="track-section">
     <div class="track-wrap">
-      <svg id="trackSvg" viewBox="0 0 760 300" preserveAspectRatio="xMidYMid meet"></svg>
+      <svg id="trackSvg" viewBox="0 0 1000 420" preserveAspectRatio="xMidYMid meet"></svg>
     </div>
     <div id="raceMessage" class="race-message">馬を選んで馬券を購入してください</div>
   </section>
 
   <section class="betting-section">
-    <h2>第<span id="raceNumber">1</span>レース 出走表</h2>
+    <h2>第<span id="raceNumber">1</span>レース <span id="raceClass" class="race-class-badge">未勝利</span> 出走表</h2>
     <div class="table-scroll">
       <table class="horse-table">
         <thead>
@@ -58,6 +58,7 @@
       </label>
       <button id="buyBtn">馬券購入</button>
       <button id="startBtn" disabled>レーススタート</button>
+      <button id="skipBtn" disabled>スキップ</button>
       <button id="nextBtn" disabled>次のレースへ</button>
       <button id="restartBtn" hidden>ゲームをリスタート</button>
     </div>

@@ -2,21 +2,50 @@
   const HORSE_POOL = [
     "サンライズホープ", "ミッドナイトブルー", "ゴールデンアロー", "シルバースター",
     "ブレイブハート", "ウインドチェイサー", "ラッキーセブン", "クリムゾンフレイム",
-    "スカイダンサー", "サンダーボルト", "ノーブルドリーム", "エメラルドキング"
+    "スカイダンサー", "サンダーボルト", "ノーブルドリーム", "エメラルドキング",
+    "インビクタスソード", "レインボーチェイサー", "ブラックダイヤモンド", "ホワイトフェザー",
+    "スターライトクイーン", "アイアンウィル", "フェニックスファイア", "ムーンリットレイン",
+    "グランプリズム", "オーロラダンス", "トリプルエース", "ヴィクトリーロード",
+    "シャイニングウェーブ", "デザートストーム", "コスモウィスパー", "ロイヤルフラッシュ",
+    "スパークリングスター", "タイフーンゲイル", "エターナルフレア", "ジェットストリーム",
+    "パープルレイン", "ゴールドラッシュ", "シルクロード", "ワイルドカード",
+    "ネオンライト", "クリスタルウィング", "サウザンドドリーム", "レッドインパルス",
   ];
 
   const JOCKEY_POOL = [
-    { name: "武藤リョウ", rank: "S" },
-    { name: "石川タクミ", rank: "S" },
-    { name: "斎藤ケンタ", rank: "A" },
-    { name: "松本ユウキ", rank: "A" },
-    { name: "小林アキラ", rank: "A" },
-    { name: "中村ダイキ", rank: "B" },
-    { name: "藤田ソウタ", rank: "B" },
-    { name: "渡辺シュン", rank: "B" },
-    { name: "岡田ヒロト", rank: "C" },
-    { name: "山口レン", rank: "C" },
+    { name: "C.ルメール", rank: "S" },
+    { name: "武豊", rank: "S" },
+    { name: "岩田望来", rank: "A" },
+    { name: "松山弘平", rank: "A" },
+    { name: "戸崎圭太", rank: "A" },
+    { name: "丹内祐二", rank: "B" },
+    { name: "鮫島克駿", rank: "B" },
+    { name: "横山武史", rank: "B" },
+    { name: "今村聖奈", rank: "C" },
+    { name: "坂井瑠星", rank: "C" },
   ];
+
+  // レース番号(1〜12)ごとのクラス設定。未勝利は波乱（穴馬台頭）が起きやすいよう
+  // 実際のレース結果の分散（varMin〜varMax）を広めに取る
+  const RACE_CLASSES = [
+    { name: "未勝利", varMin: 0.5, varMax: 1.65 },
+    { name: "未勝利", varMin: 0.5, varMax: 1.65 },
+    { name: "未勝利", varMin: 0.5, varMax: 1.65 },
+    { name: "未勝利", varMin: 0.5, varMax: 1.65 },
+    { name: "未勝利", varMin: 0.5, varMax: 1.65 },
+    { name: "1勝クラス", varMin: 0.68, varMax: 1.35 },
+    { name: "1勝クラス", varMin: 0.68, varMax: 1.35 },
+    { name: "2勝クラス", varMin: 0.75, varMax: 1.28 },
+    { name: "2勝クラス", varMin: 0.75, varMax: 1.28 },
+    { name: "3勝クラス", varMin: 0.8, varMax: 1.22 },
+    { name: "オープン", varMin: 0.85, varMax: 1.18 },
+    { name: "1勝クラス", varMin: 0.68, varMax: 1.35 },
+  ];
+  const NUM_RACES_PER_DAY = RACE_CLASSES.length;
+
+  function getRaceClass(raceNumber) {
+    return RACE_CLASSES[(raceNumber - 1) % NUM_RACES_PER_DAY];
+  }
 
   const JOCKEY_RANK_MULT = { S: 1.4, A: 1.15, B: 1.0, C: 0.75 };
   const CONDITION_MULT = { up: 1.3, flat: 1.0, down: 0.7 };
@@ -34,17 +63,19 @@
   const PLACE_ODDS_MAX = 40;
 
   // --- コース形状（楕円トラック）のジオメトリ ---
+  // より広く大きいコースにし、ゴールは直線（ホームストレート）の左側に置くことで
+  // ターンを立ち上がってからゴールまでの直線を長く見せる
   const TRACK = {
-    baseXLeft: 150,
-    baseXRight: 610,
-    baseYTop: 40,
-    baseYBottom: 260,
-    outerRailInset: 6,
-    laneWidth: 9,
+    baseXLeft: 170,
+    baseXRight: 830,
+    baseYTop: 50,
+    baseYBottom: 370,
+    outerRailInset: 8,
+    laneWidth: 12,
     numLanes: NUM_HORSES,
   };
   TRACK.innerRailInset = TRACK.outerRailInset + TRACK.laneWidth * TRACK.numLanes;
-  const FINISH_X = 460;
+  const FINISH_X = 320;
 
   function geometryAt(inset) {
     const xLeft = TRACK.baseXLeft + inset;
@@ -81,11 +112,14 @@
     tickets: [],
     raceRunning: false,
     raceFinished: false,
+    raceTimeoutId: null,
+    currentFinishOrder: null,
   };
 
   const el = {
     balance: document.getElementById("balance"),
     raceNumber: document.getElementById("raceNumber"),
+    raceClass: document.getElementById("raceClass"),
     trackSvg: document.getElementById("trackSvg"),
     raceMessage: document.getElementById("raceMessage"),
     horseTableBody: document.getElementById("horseTableBody"),
@@ -93,6 +127,7 @@
     betAmount: document.getElementById("betAmount"),
     buyBtn: document.getElementById("buyBtn"),
     startBtn: document.getElementById("startBtn"),
+    skipBtn: document.getElementById("skipBtn"),
     nextBtn: document.getElementById("nextBtn"),
     restartBtn: document.getElementById("restartBtn"),
     ticketInfo: document.getElementById("ticketInfo"),
@@ -324,7 +359,9 @@
     state.raceFinished = false;
     el.raceMessage.textContent = "馬を選んで馬券を購入してください";
     el.raceNumber.textContent = state.raceNumber;
+    el.raceClass.textContent = getRaceClass(state.raceNumber).name;
     el.startBtn.disabled = true;
+    el.skipBtn.disabled = true;
     el.nextBtn.disabled = true;
     el.restartBtn.hidden = true;
     updateBuyAvailability();
@@ -337,6 +374,7 @@
     el.raceMessage.textContent = `所持金が最低購入額（${MIN_BET}円）を下回りました。ゲームオーバーです。`;
     el.buyBtn.disabled = true;
     el.startBtn.disabled = true;
+    el.skipBtn.disabled = true;
     el.nextBtn.disabled = true;
     el.restartBtn.hidden = false;
   }
@@ -385,28 +423,32 @@
   }
 
   function computeFinishOrder() {
+    const { varMin, varMax } = getRaceClass(state.raceNumber);
     const performances = state.horses.map((h) => ({
       id: h.id,
-      score: h.trueStrength * (0.7 + Math.random() * 0.6),
+      score: h.trueStrength * (varMin + Math.random() * (varMax - varMin)),
     }));
     performances.sort((a, b) => b.score - a.score);
     return performances.map((p) => p.id);
   }
 
+  const RACE_BASE_TIME = 21.0;
+  const RACE_GAP_PER_RANK = 0.6;
+
   function runRace() {
     state.raceRunning = true;
     el.buyBtn.disabled = true;
     el.startBtn.disabled = true;
+    el.skipBtn.disabled = false;
     el.raceMessage.textContent = "レース中...";
 
     const finishOrder = computeFinishOrder();
-    const baseTime = 6.0;
-    const gapPerRank = 0.55;
+    state.currentFinishOrder = finishOrder;
 
     finishOrder.forEach((horseId, rank) => {
       const horse = state.horses.find((h) => h.id === horseId);
       const runner = document.getElementById(`runner-${horseId}`);
-      const duration = baseTime + rank * gapPerRank;
+      const duration = RACE_BASE_TIME + rank * RACE_GAP_PER_RANK;
       const targetPercent = finishOffsetPercent(laneInset(horse.lane));
       runner.style.transition = `offset-distance ${duration}s linear`;
       // force reflow so the transition is picked up
@@ -414,11 +456,29 @@
       runner.style.offsetDistance = `${targetPercent}%`;
     });
 
-    const totalTime = baseTime + (finishOrder.length - 1) * gapPerRank;
+    const totalTime = RACE_BASE_TIME + (finishOrder.length - 1) * RACE_GAP_PER_RANK;
 
-    setTimeout(() => {
+    state.raceTimeoutId = setTimeout(() => {
+      state.raceTimeoutId = null;
       finishRace(finishOrder);
     }, totalTime * 1000 + 300);
+  }
+
+  function skipRace() {
+    if (!state.raceRunning || !state.currentFinishOrder) return;
+    if (state.raceTimeoutId !== null) {
+      clearTimeout(state.raceTimeoutId);
+      state.raceTimeoutId = null;
+    }
+
+    state.horses.forEach((horse) => {
+      const runner = document.getElementById(`runner-${horse.id}`);
+      const targetPercent = finishOffsetPercent(laneInset(horse.lane));
+      runner.style.transition = "none";
+      runner.style.offsetDistance = `${targetPercent}%`;
+    });
+
+    finishRace(state.currentFinishOrder);
   }
 
   function finishRace(finishOrder) {
@@ -467,15 +527,19 @@
 
     el.nextBtn.disabled = false;
     el.buyBtn.disabled = true;
+    el.skipBtn.disabled = true;
+    state.currentFinishOrder = null;
   }
 
   function nextRace() {
-    state.raceNumber += 1;
+    // 1日は12レース制。12レースが終わったら1レースに戻る
+    state.raceNumber = state.raceNumber >= NUM_RACES_PER_DAY ? 1 : state.raceNumber + 1;
     resetForNewRace();
   }
 
   el.buyBtn.addEventListener("click", buyTicket);
   el.startBtn.addEventListener("click", runRace);
+  el.skipBtn.addEventListener("click", skipRace);
   el.nextBtn.addEventListener("click", nextRace);
   el.restartBtn.addEventListener("click", restartGame);
 
