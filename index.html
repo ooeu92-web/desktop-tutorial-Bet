@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>馬券シミュレーター</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="app">
+  <header class="app-header">
+    <h1>🏇 馬券購入シミュレーター</h1>
+    <div class="balance-box">
+      所持金 <span id="balance">10,000</span> 円
+    </div>
+  </header>
+
+  <section class="track-section">
+    <div id="track" class="track">
+      <!-- 馬のレーンはJSで生成 -->
+    </div>
+    <div id="raceMessage" class="race-message">馬を選んで馬券を購入してください</div>
+  </section>
+
+  <section class="betting-section">
+    <h2>第<span id="raceNumber">1</span>レース 出走表</h2>
+    <table class="horse-table">
+      <thead>
+        <tr>
+          <th>枠</th>
+          <th>馬名</th>
+          <th>単勝オッズ</th>
+          <th>複勝オッズ</th>
+          <th>選択</th>
+        </tr>
+      </thead>
+      <tbody id="horseTableBody">
+      </tbody>
+    </table>
+
+    <div class="bet-controls">
+      <label>
+        式別
+        <select id="betType">
+          <option value="win">単勝 (1着のみ的中)</option>
+          <option value="place">複勝 (3着以内で的中)</option>
+        </select>
+      </label>
+      <label>
+        金額
+        <input type="number" id="betAmount" value="100" min="100" step="100">
+      </label>
+      <button id="buyBtn">馬券購入</button>
+      <button id="startBtn" disabled>レーススタート</button>
+      <button id="nextBtn" disabled>次のレースへ</button>
+    </div>
+
+    <div id="ticketInfo" class="ticket-info"></div>
+  </section>
+
+  <section class="history-section">
+    <h2>購入履歴</h2>
+    <table class="history-table">
+      <thead>
+        <tr>
+          <th>レース</th>
+          <th>式別</th>
+          <th>馬名</th>
+          <th>金額</th>
+          <th>結果</th>
+          <th>払戻</th>
+        </tr>
+      </thead>
+      <tbody id="historyBody"></tbody>
+    </table>
+  </section>
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>

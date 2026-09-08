@@ -1,5 +1,20 @@
-# Welcome to GitHub Desktop!
+# 馬券購入シミュレーター 🏇
 
-This is your README. READMEs are where you can communicate what your project is and how to use it.
+ブラウザだけで遊べる馬券購入シミュレーションゲームです。フレームワーク不要、`index.html` を開くだけで動作します。
 
-Write your name on line 6, save it, and then head back to GitHub Desktop.
+## 遊び方
+
+1. `index.html` をブラウザで開きます。
+2. 出走表から馬を選び、式別（単勝 / 複勝）と金額を指定して「馬券購入」を押します。
+   - **単勝**: 1着を当てると的中
+   - **複勝**: 3着以内なら的中（配当は単勝より低め）
+3. 同じレース内であれば複数の馬券を購入できます。
+4. 「レーススタート」でレースをシミュレートし、結果に応じて払戻が所持金に反映されます。
+5. 「次のレースへ」で新しい出走馬・オッズが生成され、次のレースに進みます。
+6. 所持金が最低購入額（100円）を下回るとゲームオーバーです。
+
+## ファイル構成
+
+- `index.html` — 画面構成
+- `style.css` — スタイル
+- `script.js` — ゲームロジック（オッズ計算・レース抽選・払戻計算・アニメーション）
