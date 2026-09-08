@@ -17,27 +17,32 @@
   </header>
 
   <section class="track-section">
-    <div id="track" class="track">
-      <!-- 馬のレーンはJSで生成 -->
+    <div class="track-wrap">
+      <svg id="trackSvg" viewBox="0 0 760 300" preserveAspectRatio="xMidYMid meet"></svg>
     </div>
     <div id="raceMessage" class="race-message">馬を選んで馬券を購入してください</div>
   </section>
 
   <section class="betting-section">
     <h2>第<span id="raceNumber">1</span>レース 出走表</h2>
-    <table class="horse-table">
-      <thead>
-        <tr>
-          <th>枠</th>
-          <th>馬名</th>
-          <th>単勝オッズ</th>
-          <th>複勝オッズ</th>
-          <th>選択</th>
-        </tr>
-      </thead>
-      <tbody id="horseTableBody">
-      </tbody>
-    </table>
+    <div class="table-scroll">
+      <table class="horse-table">
+        <thead>
+          <tr>
+            <th>枠</th>
+            <th>馬名</th>
+            <th>騎手</th>
+            <th>近3走</th>
+            <th>調子</th>
+            <th>単勝オッズ</th>
+            <th>複勝オッズ</th>
+            <th>選択</th>
+          </tr>
+        </thead>
+        <tbody id="horseTableBody">
+        </tbody>
+      </table>
+    </div>
 
     <div class="bet-controls">
       <label>
@@ -54,6 +59,7 @@
       <button id="buyBtn">馬券購入</button>
       <button id="startBtn" disabled>レーススタート</button>
       <button id="nextBtn" disabled>次のレースへ</button>
+      <button id="restartBtn" hidden>ゲームをリスタート</button>
     </div>
 
     <div id="ticketInfo" class="ticket-info"></div>
