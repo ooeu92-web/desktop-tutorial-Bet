@@ -6,16 +6,16 @@
   ];
 
   const JOCKEY_POOL = [
-    { name: "武藤リョウ", rank: "S" },
-    { name: "石川タクミ", rank: "S" },
-    { name: "斎藤ケンタ", rank: "A" },
-    { name: "松本ユウキ", rank: "A" },
-    { name: "小林アキラ", rank: "A" },
-    { name: "中村ダイキ", rank: "B" },
-    { name: "藤田ソウタ", rank: "B" },
-    { name: "渡辺シュン", rank: "B" },
-    { name: "岡田ヒロト", rank: "C" },
-    { name: "山口レン", rank: "C" },
+    { name: "C.ルメール", rank: "S" },
+    { name: "武豊", rank: "S" },
+    { name: "岩田望来", rank: "A" },
+    { name: "松山弘平", rank: "A" },
+    { name: "戸崎圭太", rank: "A" },
+    { name: "丹内祐二", rank: "B" },
+    { name: "鮫島克駿", rank: "B" },
+    { name: "横山武史", rank: "B" },
+    { name: "今村聖奈", rank: "C" },
+    { name: "坂井瑠星", rank: "C" },
   ];
 
   const JOCKEY_RANK_MULT = { S: 1.4, A: 1.15, B: 1.0, C: 0.75 };
