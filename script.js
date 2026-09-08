@@ -87,6 +87,12 @@
   const HEAVY_TRACK_JOCKEY_BONUS = { S: 1.0, A: 1.0, B: 1.12, C: 1.2 };
   const RAIN_CHANCE = 0.2;
 
+  // コース表面（ダート／芝）の色設定
+  const SURFACE_COLORS = {
+    dirt: { good: "#c9a86a", heavy: "#8a6f4a", label: "ダート" },
+    turf: { good: "#4c9a4f", heavy: "#5f6e3f", label: "芝" },
+  };
+
   const MIN_BET = 100;
   const START_BALANCE = 10000;
   const NUM_HORSES = 8;
@@ -120,6 +126,17 @@
   };
   TRACK.innerRailInset = TRACK.outerRailInset + TRACK.laneWidth * TRACK.numLanes;
   const FINISH_X = 320;
+  const START_X = 280;
+  const MERGE_X = 400;
+  const MERGE_RUN = 70;
+
+  // スタート後、外枠の馬ほど大きくインコースへ寄っていく「クルーズレーン」
+  // （実際の競馬のように内に寄る動きを再現しつつ、番号の視認性を保つため
+  // 車線間隔は詰めすぎない）
+  const CRUISE = {
+    laneWidth: 9,
+    innerRailInset: TRACK.innerRailInset - 4,
+  };
 
   function geometryAt(inset) {
     const xLeft = TRACK.baseXLeft + inset;
@@ -140,12 +157,16 @@
     return TRACK.innerRailInset - TRACK.laneWidth * (waku - 0.5);
   }
 
-  function finishOffsetPercent(inset) {
-    const { xLeft, xRight, r } = geometryAt(inset);
-    const straight = xRight - xLeft;
-    const lap = 2 * straight + 2 * Math.PI * r;
-    const distanceToFinish = straight + Math.PI * r + (xRight - FINISH_X);
-    return (distanceToFinish / lap) * 100;
+  function cruiseInset(waku) {
+    return CRUISE.innerRailInset - CRUISE.laneWidth * (waku - 0.5);
+  }
+
+  // 各馬の実際の走行経路：スタート直後は枠なりに広がっているが、
+  // 序盤で内側のクルーズレーンへ寄っていき、そのままゴール（直線左側）まで走る
+  function buildRunnerPath(waku) {
+    const startY = geometryAt(laneInset(waku)).yTop;
+    const cGeom = geometryAt(cruiseInset(waku));
+    return `M ${START_X} ${startY} L ${MERGE_X} ${startY} L ${MERGE_X + MERGE_RUN} ${cGeom.yTop} L ${cGeom.xRight} ${cGeom.yTop} A ${cGeom.r} ${cGeom.r} 0 0 1 ${cGeom.xRight} ${cGeom.yBottom} L ${FINISH_X} ${cGeom.yBottom}`;
   }
 
   const state = {
@@ -159,6 +180,7 @@
     totalHits: 0,
     balance: START_BALANCE,
     raceNumber: 1,
+    surface: "dirt",
     weather: { type: "clear", trackCondition: "good" },
     horses: [],
     selectedHorseId: null,
@@ -177,6 +199,7 @@
     gameScreen: document.getElementById("gameScreen"),
     lobbyReturnBtn: document.getElementById("lobbyReturnBtn"),
     weatherBox: document.getElementById("weatherBox"),
+    surfaceToggleBtn: document.getElementById("surfaceToggleBtn"),
     raceNumber: document.getElementById("raceNumber"),
     raceClass: document.getElementById("raceClass"),
     trackSvg: document.getElementById("trackSvg"),
@@ -464,7 +487,8 @@
     const startPoint = geometryAt(laneInset(Math.ceil(NUM_HORSES / 2)));
     const startLabel = `<text x="${startPoint.xLeft - 6}" y="${startPoint.yTop - 12}" text-anchor="end" font-size="14" fill="#ffe066" font-weight="bold">START</text>`;
 
-    const trackColor = isHeavy ? "#8a6f4a" : "#c9a86a";
+    const colors = SURFACE_COLORS[state.surface];
+    const trackColor = isHeavy ? colors.heavy : colors.good;
 
     return `
       <path d="${outerFill}" fill="${trackColor}"/>
@@ -480,7 +504,7 @@
   function buildHorseMarkers() {
     return state.horses
       .map((h) => {
-        const d = stadiumPath(laneInset(h.lane));
+        const d = buildRunnerPath(h.lane);
         return `<text id="runner-${h.id}" x="0" y="0" text-anchor="middle" dominant-baseline="central" class="horse-runner-svg" style="offset-path: path('${d}'); offset-distance: 0%;"><title>${h.name}</title>🐎${h.lane}</text>`;
       })
       .join("");
@@ -515,6 +539,18 @@
     const isHeavy = state.weather.trackCondition === "heavy";
     el.weatherBox.textContent = isHeavy ? "🌧️ 重馬場" : "☀️ 良馬場";
     el.weatherBox.classList.toggle("weather-heavy", isHeavy);
+  }
+
+  function renderSurfaceToggle() {
+    const isTurf = state.surface === "turf";
+    el.surfaceToggleBtn.textContent = isTurf ? "🌱 芝" : "🟤 ダート";
+    el.surfaceToggleBtn.classList.toggle("surface-turf", isTurf);
+  }
+
+  function toggleSurface() {
+    state.surface = state.surface === "dirt" ? "turf" : "dirt";
+    renderSurfaceToggle();
+    renderTrack();
   }
 
   function ticketLabel(ticket) {
@@ -575,6 +611,7 @@
     el.restartBtn.hidden = true;
     updateBuyAvailability();
     renderWeather();
+    renderSurfaceToggle();
     renderHorseTable();
     renderComboPreview();
     renderTrack();
@@ -692,14 +729,12 @@
     state.currentFinishOrder = finishOrder;
 
     finishOrder.forEach((horseId, rank) => {
-      const horse = state.horses.find((h) => h.id === horseId);
       const runner = document.getElementById(`runner-${horseId}`);
       const duration = RACE_BASE_TIME + rank * RACE_GAP_PER_RANK;
-      const targetPercent = finishOffsetPercent(laneInset(horse.lane));
       runner.style.transition = `offset-distance ${duration}s linear`;
       // force reflow so the transition is picked up
       void runner.getBoundingClientRect();
-      runner.style.offsetDistance = `${targetPercent}%`;
+      runner.style.offsetDistance = "100%";
     });
 
     const totalTime = RACE_BASE_TIME + (finishOrder.length - 1) * RACE_GAP_PER_RANK;
@@ -719,9 +754,8 @@
 
     state.horses.forEach((horse) => {
       const runner = document.getElementById(`runner-${horse.id}`);
-      const targetPercent = finishOffsetPercent(laneInset(horse.lane));
       runner.style.transition = "none";
-      runner.style.offsetDistance = `${targetPercent}%`;
+      runner.style.offsetDistance = "100%";
     });
 
     finishRace(state.currentFinishOrder);
@@ -852,6 +886,7 @@
   el.nextBtn.addEventListener("click", nextRace);
   el.restartBtn.addEventListener("click", restartGame);
   el.lobbyReturnBtn.addEventListener("click", returnToLobby);
+  el.surfaceToggleBtn.addEventListener("click", toggleSurface);
   el.betType.addEventListener("change", () => {
     state.selectedHorseId = null;
     state.selectedHorseIds = [];

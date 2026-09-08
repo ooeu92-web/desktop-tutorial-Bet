@@ -117,7 +117,21 @@ body {
 .track-top-bar {
   display: flex;
   justify-content: flex-start;
+  align-items: center;
+  gap: 10px;
   margin-bottom: 8px;
+}
+
+.surface-toggle-btn {
+  padding: 4px 12px;
+  font-size: 0.9em;
+  background: #c9a86a;
+  color: #1a1a1a;
+}
+
+.surface-toggle-btn.surface-turf {
+  background: #4c9a4f;
+  color: #fff;
 }
 
 .weather-box {
