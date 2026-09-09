@@ -1275,9 +1275,16 @@
       const runner = document.getElementById(`runner-${horseId}`);
       const duration = RACE_BASE_TIME + rank * RACE_GAP_PER_RANK;
       runner.style.transition = `offset-distance ${duration}s linear`;
-      // force reflow so the transition is picked up
-      void runner.getBoundingClientRect();
-      runner.style.offsetDistance = "100%";
+    });
+    // 2フレーム分待ってからoffset-distanceを変更する（スマホのSafari等でも
+    // 確実にトランジションが発火するようにするための定番の対策）
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        finishOrder.forEach((horseId) => {
+          const runner = document.getElementById(`runner-${horseId}`);
+          if (runner) runner.style.offsetDistance = "100%";
+        });
+      });
     });
 
     const totalTime = RACE_BASE_TIME + (finishOrder.length - 1) * RACE_GAP_PER_RANK;
@@ -1322,13 +1329,22 @@
       const runner = document.getElementById(`runner-${horseId}`);
       const duration = RACE_BASE_TIME + rank * RACE_GAP_PER_RANK;
       const pct = Math.min(100, (tSkip / duration) * 100);
-      const remaining = Math.max(0.3, duration - tSkip);
       runner.style.transition = "none";
       runner.style.offsetDistance = `${pct}%`;
-      // force reflow so the transition is picked up
-      void runner.getBoundingClientRect();
-      runner.style.transition = `offset-distance ${remaining}s linear`;
-      runner.style.offsetDistance = "100%";
+    });
+    // 2フレーム分待ってからトランジションを再開する（スマホのSafari等でも
+    // 確実にトランジションが発火するようにするための定番の対策）
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        finishOrder.forEach((horseId, rank) => {
+          const runner = document.getElementById(`runner-${horseId}`);
+          if (!runner) return;
+          const duration = RACE_BASE_TIME + rank * RACE_GAP_PER_RANK;
+          const remaining = Math.max(0.3, duration - tSkip);
+          runner.style.transition = `offset-distance ${remaining}s linear`;
+          runner.style.offsetDistance = "100%";
+        });
+      });
     });
 
     el.trackSvg.classList.add("zoomed");

@@ -1,6 +1,6 @@
 // オフラインでも遊べるように、アプリ本体のファイルをキャッシュする
 // ファイルを更新したらCACHE_NAMEのバージョンを上げること（古いキャッシュは自動で破棄される）
-const CACHE_NAME = "betting-derby-cache-v1";
+const CACHE_NAME = "betting-derby-cache-v2";
 const APP_SHELL = [
   "./",
   "./index.html",
