@@ -638,3 +638,95 @@ button:hover:not(:disabled) {
 .owner-stable-footer button {
   flex: 1;
 }
+
+.owner-stable-section {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-card);
+}
+
+.owner-stable-section h3 {
+  margin: 0 0 8px;
+  font-size: 0.95em;
+  color: var(--accent-gold);
+}
+
+.owner-jockey-list-compact {
+  max-height: 160px;
+  overflow-y: auto;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+}
+
+.owner-race-log {
+  max-height: 140px;
+  overflow-y: auto;
+  font-size: 0.85em;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.owner-race-log-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 3px 6px;
+  background: var(--bg-card);
+  border-radius: 4px;
+}
+
+.owner-item-shop {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.owner-item-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-card);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 0.85em;
+}
+
+.owner-item-row small {
+  color: var(--text-muted);
+}
+
+.owner-item-row button {
+  white-space: nowrap;
+}
+
+.owner-market-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.owner-market-card {
+  background: var(--bg-card);
+  border: 2px solid var(--border-card);
+  border-radius: 8px;
+  padding: 10px;
+  text-align: center;
+}
+
+.owner-market-card h4 {
+  margin: 0 0 8px;
+}
+
+.owner-market-card p {
+  font-size: 0.85em;
+  color: var(--text-muted);
+  margin: 4px 0;
+}
+
+.owner-horse-runner-svg {
+  fill: #00e5ff;
+  stroke: #00323d;
+}

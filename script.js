@@ -134,7 +134,8 @@
   const WIN_ODDS_MIN = 1.5;
   const WIN_ODDS_MAX = 120;
   const PLACE_ODDS_MIN = 1.2;
-  const PLACE_ODDS_MAX = 40;
+  const PLACE_ODDS_MAX = 25;
+  const PLACE_ODDS_DIVISOR = 3.5;
   const UMAREN_ODDS_MIN = 1.5;
   const UMAREN_ODDS_MAX = 300;
   const MAX_SINGLE_DIGIT_ODDS_HORSES = 5;
@@ -150,6 +151,8 @@
   const OWNER_STAT_MIN = 10;
   const OWNER_START_TOKENS = 3000;
   const OWNER_JOCKEY_HIRE_COST = { S: 500, A: 250, B: 100, C: 30 };
+  // 騎手ランクごとの「毎レース」固定依頼料（緊張感を出すための継続コスト）
+  const OWNER_JOCKEY_RACE_FEE = { S: 100, A: 50, B: 20, C: 8 };
   const OWNER_CLASSES = [
     { name: "未勝利", varMin: 0.5, varMax: 1.65 },
     { name: "1勝クラス", varMin: 0.68, varMax: 1.35 },
@@ -157,8 +160,32 @@
     { name: "3勝クラス", varMin: 0.8, varMax: 1.22 },
     { name: "オープン", varMin: 0.85, varMax: 1.18 },
     { name: "重賞", varMin: 0.9, varMax: 1.15 },
+    { name: "GI", varMin: 0.93, varMax: 1.1 },
   ];
+  const STAKES_WINS_FOR_GI = 2; // 重賞を何勝したらGIに挑戦できるか
   const OWNER_SAVE_KEY = "bettingDerbyOwnerSave_v1";
+
+  // OPを消費してあらかじめ能力の仕上がった馬を購入できる馬市場
+  const HORSE_MARKET = [
+    { rank: "C", statTotal: 165, price: 300 },
+    { rank: "B", statTotal: 190, price: 900 },
+    { rank: "A", statTotal: 220, price: 2000 },
+    { rank: "S", statTotal: 260, price: 4000 },
+  ];
+
+  // OPアイテムショップ
+  const OWNER_ITEMS = [
+    {
+      id: "peakCondition",
+      name: "絶好調ドリンク",
+      desc: "次のレース、愛馬が必ず絶好調になる",
+      price: 150,
+    },
+  ];
+
+  // 隠しコマンド：この馬名＋騎手の組み合わせでデビューすると、全レース1倍台で勝利する
+  const SECRET_HORSE_NAME = "イクイノックス";
+  const SECRET_JOCKEY_NAME = "C.ルメール";
 
   function styleFromSpeed(speed) {
     if (speed >= 75) return "nige";
@@ -290,6 +317,13 @@
     ownerStableTokens: document.getElementById("ownerStableTokens"),
     ownerRetireBtn: document.getElementById("ownerRetireBtn"),
     ownerStableCloseBtn: document.getElementById("ownerStableCloseBtn"),
+    ownerJockeyChangeList: document.getElementById("ownerJockeyChangeList"),
+    ownerRaceLog: document.getElementById("ownerRaceLog"),
+    ownerItemShop: document.getElementById("ownerItemShop"),
+    ownerMarketBtn: document.getElementById("ownerMarketBtn"),
+    ownerMarketModal: document.getElementById("ownerMarketModal"),
+    ownerMarketList: document.getElementById("ownerMarketList"),
+    ownerMarketCloseBtn: document.getElementById("ownerMarketCloseBtn"),
     raceNumber: document.getElementById("raceNumber"),
     raceClass: document.getElementById("raceClass"),
     trackSvg: document.getElementById("trackSvg"),
@@ -357,6 +391,11 @@
 
   function generateHorses() {
     const isOwnerRace = state.mode === "owner" && !!state.ownerHorse;
+    const isGIRace = isOwnerRace && currentRaceClass().name === "GI";
+    const isSecretHorse =
+      isOwnerRace &&
+      state.ownerHorse.name === SECRET_HORSE_NAME &&
+      state.ownerHorse.jockeyName === SECRET_JOCKEY_NAME;
     const ownerIndex = isOwnerRace ? Math.floor(Math.random() * NUM_HORSES) : -1;
     const aiCount = isOwnerRace ? NUM_HORSES - 1 : NUM_HORSES;
     const aiNames = shuffle(HORSE_POOL).slice(0, aiCount);
@@ -396,16 +435,41 @@
       const isHeartbeat = i === heartbeatIndex;
       const isFrontier = i === frontierIndex;
       const isOwnerHorse = i === ownerIndex;
+      const isSecretWinner = isOwnerHorse && isSecretHorse;
       let base;
       if (isHeartbeat) base = 15 + Math.random() * 10;
-      else if (isOwnerHorse) base = 65 * (0.7 + (state.ownerHorse.stats.speed / 100) * 0.6);
+      else if (isOwnerHorse) base = 65 * (0.82 + (state.ownerHorse.stats.speed / 100) * 0.36);
       else base = 20 + Math.random() * 90;
-      const last3 = randomLast3();
-      const formMult = formMultFromLast3(last3);
+
+      // 自厩馬の近3走は実際の過去レース結果を使う（未消化分は影響が中立になる値で埋める）
+      let last3, formLast3;
+      if (isOwnerHorse) {
+        const history = state.ownerHorse.recentResults || [];
+        const neutral = (NUM_HORSES + 1) / 2;
+        last3 = [];
+        formLast3 = [];
+        for (let k = 0; k < 3; k++) {
+          const histIdx = history.length - 3 + k;
+          if (histIdx >= 0) {
+            last3.push(history[histIdx]);
+            formLast3.push(history[histIdx]);
+          } else {
+            last3.push(null);
+            formLast3.push(neutral);
+          }
+        }
+      } else {
+        last3 = randomLast3();
+        formLast3 = last3;
+      }
+      const formMult = formMultFromLast3(formLast3);
+
       const jockey = jockeys[i];
-      const jockeyMult = JOCKEY_RANK_MULT[jockey.rank];
+      // GIレースに限り、全騎手の実際の能力がAランク以上になる（Sランクはそのまま）
+      const effJockeyRank = isGIRace ? (jockey.rank === "S" ? "S" : "A") : jockey.rank;
+      const jockeyMult = JOCKEY_RANK_MULT[effJockeyRank];
       const runningStyle = isOwnerHorse ? styleFromSpeed(state.ownerHorse.stats.speed) : pickRunningStyle();
-      const condition = pickCondition();
+      const condition = isOwnerHorse && state.ownerHorse.nextConditionBoost ? "up" : pickCondition();
       const conditionMult = CONDITION_MULT[condition];
       const heavyTrackMult = isHeavyTrack ? HEAVY_TRACK_JOCKEY_BONUS[jockey.rank] : 1.0;
 
@@ -413,8 +477,8 @@
       const trueStrength = Math.max(3, base * formMult * jockeyMult * conditionMult * heavyTrackMult);
 
       // 世間が見積もる強さ（騎手の看板を過大評価し、馬の調子の変化や馬場適性を
-      // 過小評価する傾向 + 予想の誤差）
-      const marketJockeyMult = 1 + (jockeyMult - 1) * 1.6;
+      // 過小評価する傾向 + 予想の誤差）。GIの実力補正は織り込まれないため妙味が生まれる
+      const marketJockeyMult = 1 + (JOCKEY_RANK_MULT[jockey.rank] - 1) * 1.6;
       const marketConditionMult = 1 + (conditionMult - 1) * 0.3;
       const noise = 1 + (Math.random() * 0.9 - 0.45);
       const marketStrength = Math.max(
@@ -426,7 +490,7 @@
       if (isHeartbeat) horseName = HEARTBEAT_NAME;
       else if (isFrontier) horseName = FRONTIER_NAME;
 
-      return { name: horseName, last3, jockey, runningStyle, condition, trueStrength, marketStrength, isHeartbeat, isFrontier, isOwnerHorse };
+      return { name: horseName, last3, jockey, runningStyle, condition, trueStrength, marketStrength, isHeartbeat, isFrontier, isOwnerHorse, isSecretWinner };
     });
 
     const marketSum = raw.reduce((s, h) => s + h.marketStrength, 0);
@@ -437,7 +501,10 @@
       if (h.isHeartbeat) {
         oddsWin = Math.max(oddsWin, round1(HEARTBEAT_MIN_ODDS + Math.random() * 15));
       }
-      const oddsPlace = clamp(round1(1 + (oddsWin - 1) / 2.8), PLACE_ODDS_MIN, PLACE_ODDS_MAX);
+      if (h.isSecretWinner) {
+        oddsWin = round1(1.1 + Math.random() * 0.8);
+      }
+      const oddsPlace = clamp(round1(1 + (oddsWin - 1) / PLACE_ODDS_DIVISOR), PLACE_ODDS_MIN, PLACE_ODDS_MAX);
       return {
         id: i + 1,
         lane: i + 1,
@@ -454,6 +521,7 @@
         isHeartbeat: h.isHeartbeat,
         isFrontier: h.isFrontier,
         isOwnerHorse: h.isOwnerHorse,
+        isSecretWinner: h.isSecretWinner,
       };
     });
 
@@ -461,9 +529,9 @@
     return horses;
   }
 
-  // 単勝オッズが1桁（10倍未満）になる馬は最大4頭までに制限する
+  // 単勝オッズが1桁（10倍未満）になる馬は最大5頭までに制限する
   function enforceSingleDigitOddsCap(horses) {
-    const candidates = horses.filter((h) => !h.isHeartbeat);
+    const candidates = horses.filter((h) => !h.isHeartbeat && !h.isSecretWinner);
     const sortedByOdds = [...candidates].sort((a, b) => a.oddsWin - b.oddsWin);
     let singleDigitCount = 0;
     sortedByOdds.forEach((h) => {
@@ -471,7 +539,7 @@
         singleDigitCount++;
         if (singleDigitCount > MAX_SINGLE_DIGIT_ODDS_HORSES) {
           h.oddsWin = clamp(round1(10 + Math.random() * 10), 10, WIN_ODDS_MAX);
-          h.oddsPlace = clamp(round1(1 + (h.oddsWin - 1) / 2.8), PLACE_ODDS_MIN, PLACE_ODDS_MAX);
+          h.oddsPlace = clamp(round1(1 + (h.oddsWin - 1) / PLACE_ODDS_DIVISOR), PLACE_ODDS_MIN, PLACE_ODDS_MAX);
         }
       }
     });
@@ -509,7 +577,7 @@
       }
       el.modeInfo.hidden = false;
       const cls = OWNER_CLASSES[state.ownerHorse.classIndex].name;
-      el.modeInfo.textContent = `🐴 ${state.ownerHorse.name}（${cls}・通算${state.ownerHorse.wins}勝）${state.ownerHorse.cleared ? " 🏆重賞制覇" : ""}`;
+      el.modeInfo.textContent = `🐴 ${state.ownerHorse.name}（${cls}・通算${state.ownerHorse.wins}勝）${state.ownerHorse.cleared ? " 🏆殿堂入り" : ""}`;
       return;
     }
     if (!state.mode || state.mode === "normal") {
@@ -562,7 +630,7 @@
           ${horse.jockeyName}
           <span class="rank-badge rank-${horse.jockeyRank}" title="${RANK_LABEL[horse.jockeyRank]}">${horse.jockeyRank}</span>
         </td>
-        <td>${horse.last3.join("-")}</td>
+        <td>${horse.last3.every((v) => v === null) ? "戦績なし" : horse.last3.map((v) => (v === null ? "-" : v)).join("-")}</td>
         <td><span class="style-badge style-${horse.runningStyle}" title="${STYLE_LABEL[horse.runningStyle]}">${STYLE_ICON[horse.runningStyle]}</span></td>
         <td class="cond-${horse.condition}">${CONDITION_LABEL[horse.condition]}</td>
         <td>${horse.oddsWin.toFixed(1)}倍</td>
@@ -659,7 +727,8 @@
     return state.horses
       .map((h) => {
         const d = buildRunnerPath(h.lane);
-        return `<text id="runner-${h.id}" x="0" y="0" text-anchor="middle" dominant-baseline="central" class="horse-runner-svg" style="offset-path: path('${d}'); offset-distance: 0%;"><title>${h.name}</title>🐎${h.lane}</text>`;
+        const cls = h.isOwnerHorse ? "horse-runner-svg owner-horse-runner-svg" : "horse-runner-svg";
+        return `<text id="runner-${h.id}" x="0" y="0" text-anchor="middle" dominant-baseline="central" class="${cls}" style="offset-path: path('${d}'); offset-distance: 0%;"><title>${h.name}</title>🐎${h.lane}</text>`;
       })
       .join("");
   }
@@ -900,6 +969,7 @@
       state.selectedHorseId = ownerH ? ownerH.id : null;
       el.umarenOption.hidden = true;
       if (el.betType.value === "umaren") el.betType.value = "win";
+      if (state.ownerHorse) state.ownerHorse.nextConditionBoost = false;
     } else {
       state.selectedHorseId = null;
       el.umarenOption.hidden = false;
@@ -1046,7 +1116,7 @@
       if (!isFrontThisRace && state.mode === "owner" && state.ownerHorse) {
         const h = state.horses.find((hh) => hh.id === r.id);
         if (h && h.isOwnerHorse) {
-          mult *= 1 + ((state.ownerHorse.stats.kick - 50) / 100) * 0.5;
+          mult *= 1 + ((state.ownerHorse.stats.kick - 50) / 100) * 0.65;
         }
       }
       multiplierById.set(r.id, mult);
@@ -1056,17 +1126,19 @@
   }
 
   function computeFinishOrder() {
-    const heartbeat = state.horses.find((h) => h.isHeartbeat);
+    // シークレット機能：イクイノックス＋C.ルメールの組み合わせは必ず1着になる
+    const secretWinner = state.horses.find((h) => h.isSecretWinner);
+    const heartbeat = !secretWinner ? state.horses.find((h) => h.isHeartbeat) : null;
     const frontier = state.horses.find((h) => h.isFrontier);
     const { varMin, varMax } = currentRaceClass();
     const pace = simulatePace();
     state.lastPaceInfo = pace;
-    const contenders = state.horses.filter((h) => h !== heartbeat && h !== frontier);
+    const contenders = state.horses.filter((h) => h !== heartbeat && h !== frontier && h !== secretWinner);
     const performances = contenders.map((h) => {
       // 馬主モードの自厩馬は勝負根性が「終盤の粘り」＝結果のブレの下限を引き上げる
       let effVarMin = varMin;
       if (h.isOwnerHorse && state.ownerHorse) {
-        effVarMin = varMin + (state.ownerHorse.stats.guts / 100) * (1 - varMin) * 0.6;
+        effVarMin = varMin + (state.ownerHorse.stats.guts / 100) * (1 - varMin) * 0.75;
       }
       return {
         id: h.id,
@@ -1077,7 +1149,8 @@
     const freeOrder = performances.map((p) => p.id);
 
     const order = new Array(state.horses.length).fill(null);
-    if (heartbeat) order[0] = heartbeat.id;
+    if (secretWinner) order[0] = secretWinner.id;
+    else if (heartbeat) order[0] = heartbeat.id;
     if (frontier) order[FRONTIER_FIXED_RANK - 1] = frontier.id;
 
     let freeIdx = 0;
@@ -1200,14 +1273,39 @@
     if (state.mode === "owner" && state.ownerHorse) {
       const ownerH = state.horses.find((h) => h.isOwnerHorse);
       const ownerRank = ownerH ? rankById.get(ownerH.id) : null;
+      const raceClassName = currentRaceClass().name;
+
+      if (ownerRank !== null && ownerRank !== undefined) {
+        state.ownerHorse.recentResults = state.ownerHorse.recentResults || [];
+        state.ownerHorse.recentResults.push(ownerRank);
+        if (state.ownerHorse.recentResults.length > 3) state.ownerHorse.recentResults.shift();
+
+        state.ownerHorse.raceLog = state.ownerHorse.raceLog || [];
+        state.ownerHorse.raceLog.push({ raceNumber: state.raceNumber, className: raceClassName, rank: ownerRank });
+        if (state.ownerHorse.raceLog.length > 50) state.ownerHorse.raceLog.shift();
+      }
+
       if (ownerRank === 1) {
         state.ownerHorse.wins++;
-        if (state.ownerHorse.classIndex < OWNER_CLASSES.length - 1) {
+        const classIdx = state.ownerHorse.classIndex;
+        if (raceClassName === "重賞") {
+          state.ownerHorse.stakesWins = (state.ownerHorse.stakesWins || 0) + 1;
+          if (state.ownerHorse.stakesWins >= STAKES_WINS_FOR_GI && classIdx < OWNER_CLASSES.length - 1) {
+            state.ownerHorse.classIndex++;
+            el.raceMessage.textContent += ` 🎉重賞${state.ownerHorse.stakesWins}勝達成！次走はGIに挑戦！`;
+          } else {
+            el.raceMessage.textContent += ` 🏆重賞制覇！（重賞${state.ownerHorse.stakesWins}勝）`;
+          }
+        } else if (raceClassName === "GI") {
+          if (!state.ownerHorse.cleared) {
+            state.ownerHorse.cleared = true;
+            el.raceMessage.textContent += ` 🏆👑GI制覇！${state.ownerHorse.name}、殿堂入りです！`;
+          } else {
+            el.raceMessage.textContent += ` 🏆GI制覇！`;
+          }
+        } else if (classIdx < OWNER_CLASSES.length - 1) {
           state.ownerHorse.classIndex++;
           el.raceMessage.textContent += ` 🎉クラス昇級！次走は${OWNER_CLASSES[state.ownerHorse.classIndex].name}！`;
-        } else if (!state.ownerHorse.cleared) {
-          state.ownerHorse.cleared = true;
-          el.raceMessage.textContent += ` 🏆👑重賞制覇！${state.ownerHorse.name}、殿堂入りです！`;
         }
       }
       updateModeInfo();
@@ -1233,10 +1331,15 @@
     if (state.mode === "owner") {
       // 馬主モードは通算レース数として使う（12レース制の対象外）
       state.raceNumber += 1;
-    } else {
-      // 1日は12レース制。12レースが終わったら1レースに戻る
-      state.raceNumber = state.raceNumber >= NUM_RACES_PER_DAY ? 1 : state.raceNumber + 1;
+      const fee = chargeOwnerJockeyFee();
+      resetForNewRace();
+      if (fee > 0 && el.restartBtn.hidden) {
+        el.raceMessage.textContent = `馬を選んで馬券を購入してください（騎手依頼料 ${fee}OP を支払いました）`;
+      }
+      return;
     }
+    // 1日は12レース制。12レースが終わったら1レースに戻る
+    state.raceNumber = state.raceNumber >= NUM_RACES_PER_DAY ? 1 : state.raceNumber + 1;
     resetForNewRace();
   }
 
@@ -1274,6 +1377,7 @@
     el.gameScreen.hidden = true;
     el.ownerCreateScreen.hidden = true;
     el.ownerStableModal.hidden = true;
+    el.ownerMarketModal.hidden = true;
     el.lobbyScreen.hidden = false;
     el.lobbyReturnBtn.hidden = true;
     el.ownerStableBtn.hidden = true;
@@ -1349,6 +1453,7 @@
     el.lobbyScreen.hidden = true;
     el.gameScreen.hidden = true;
     el.ownerStableModal.hidden = true;
+    el.ownerMarketModal.hidden = true;
     el.ownerCreateScreen.hidden = false;
     el.lobbyReturnBtn.hidden = false;
     el.ownerStableBtn.hidden = true;
@@ -1392,9 +1497,14 @@
       classIndex: 0,
       wins: 0,
       cleared: false,
+      stakesWins: 0,
+      recentResults: [],
+      raceLog: [],
+      nextConditionBoost: false,
     };
     state.balance -= hireCost;
     state.raceNumber = 1;
+    const fee = chargeOwnerJockeyFee();
     saveOwnerState();
 
     el.ownerCreateScreen.hidden = true;
@@ -1403,6 +1513,17 @@
     renderBalance();
     updateModeInfo();
     resetForNewRace();
+    if (fee > 0 && el.restartBtn.hidden) {
+      el.raceMessage.textContent = `馬を選んで馬券を購入してください（騎手依頼料 ${fee}OP を支払いました）`;
+    }
+  }
+
+  // レースごとに騎手ランクに応じた固定の依頼料を所持OPから差し引く
+  function chargeOwnerJockeyFee() {
+    if (state.mode !== "owner" || !state.ownerHorse) return 0;
+    const fee = OWNER_JOCKEY_RACE_FEE[state.ownerHorse.jockeyRank] || 0;
+    state.balance -= fee;
+    return fee;
   }
 
   function openStableModal() {
@@ -1412,17 +1533,165 @@
     el.ownerStableSpeed.textContent = s.speed;
     el.ownerStableKick.textContent = s.kick;
     el.ownerStableGuts.textContent = s.guts;
-    el.ownerStableJockey.textContent = `騎手: ${state.ownerHorse.jockeyName}（${state.ownerHorse.jockeyRank}）`;
+    el.ownerStableJockey.textContent = `騎手: ${state.ownerHorse.jockeyName}（${state.ownerHorse.jockeyRank}） 依頼料 ${
+      OWNER_JOCKEY_RACE_FEE[state.ownerHorse.jockeyRank]
+    }OP/レース`;
     el.ownerStableClass.textContent = `クラス: ${OWNER_CLASSES[state.ownerHorse.classIndex].name}${
-      state.ownerHorse.cleared ? "（重賞制覇済み）" : ""
+      state.ownerHorse.cleared ? "（殿堂入り済み）" : ""
     }`;
-    el.ownerStableRecord.textContent = `通算成績: ${state.ownerHorse.wins}勝`;
+    el.ownerStableRecord.textContent = `通算成績: ${state.ownerHorse.wins}勝（重賞${state.ownerHorse.stakesWins || 0}勝）`;
     el.ownerStableTokens.textContent = `所持OP: ${formatMoney(state.balance)}OP`;
+    renderOwnerJockeyChangeList();
+    renderOwnerRaceLog();
+    renderOwnerItemShop();
     el.ownerStableModal.hidden = false;
   }
 
   function closeStableModal() {
     el.ownerStableModal.hidden = true;
+  }
+
+  // 厩舎モーダルから専属騎手をいつでも変更できる（毎レースの依頼料はランクに応じて変動する）
+  function renderOwnerJockeyChangeList() {
+    if (!state.ownerHorse) return;
+    el.ownerJockeyChangeList.innerHTML = "";
+    JOCKEY_POOL.forEach((j) => {
+      const div = document.createElement("div");
+      div.className = "owner-jockey-option";
+      if (state.ownerHorse.jockeyName === j.name) div.classList.add("selected");
+      div.innerHTML = `
+        <span class="owner-jockey-name">${j.name} <span class="rank-badge rank-${j.rank}">${j.rank}</span></span>
+        <span class="owner-jockey-cost">依頼料 ${OWNER_JOCKEY_RACE_FEE[j.rank]}OP/R</span>
+      `;
+      div.addEventListener("click", () => {
+        if (state.raceRunning) {
+          alert("レース中は騎手を変更できません");
+          return;
+        }
+        if (state.ownerHorse.jockeyName === j.name) return;
+        state.ownerHorse.jockeyName = j.name;
+        state.ownerHorse.jockeyRank = j.rank;
+        saveOwnerState();
+        openStableModal();
+      });
+      el.ownerJockeyChangeList.appendChild(div);
+    });
+  }
+
+  function renderOwnerRaceLog() {
+    if (!state.ownerHorse) return;
+    const log = state.ownerHorse.raceLog || [];
+    if (log.length === 0) {
+      el.ownerRaceLog.textContent = "まだレース実績がありません";
+      return;
+    }
+    el.ownerRaceLog.innerHTML = log
+      .slice(-10)
+      .reverse()
+      .map((entry) => {
+        const resultClass = entry.rank === 1 ? "result-win" : "result-lose";
+        const resultText = entry.rank === 1 ? "勝利" : `${entry.rank}着`;
+        return `<div class="owner-race-log-row"><span>第${entry.raceNumber}戦（${entry.className}）</span><span class="${resultClass}">${resultText}</span></div>`;
+      })
+      .join("");
+  }
+
+  function renderOwnerItemShop() {
+    if (!state.ownerHorse) return;
+    el.ownerItemShop.innerHTML = OWNER_ITEMS.map((item) => {
+      const active = item.id === "peakCondition" && state.ownerHorse.nextConditionBoost;
+      const disabled = active || state.balance < item.price;
+      return `
+        <div class="owner-item-row">
+          <span>${item.name}<br><small>${item.desc}</small></span>
+          <button data-item-id="${item.id}" ${disabled ? "disabled" : ""}>${active ? "予約済み" : `${item.price}OPで購入`}</button>
+        </div>
+      `;
+    }).join("");
+    el.ownerItemShop.querySelectorAll("button[data-item-id]").forEach((btn) => {
+      btn.addEventListener("click", () => buyOwnerItem(btn.dataset.itemId));
+    });
+  }
+
+  function buyOwnerItem(itemId) {
+    const item = OWNER_ITEMS.find((i) => i.id === itemId);
+    if (!item || !state.ownerHorse) return;
+    if (item.id === "peakCondition" && state.ownerHorse.nextConditionBoost) return;
+    if (state.balance < item.price) {
+      alert("所持OPが不足しています");
+      return;
+    }
+    state.balance -= item.price;
+    if (item.id === "peakCondition") state.ownerHorse.nextConditionBoost = true;
+    renderBalance();
+    saveOwnerState();
+    el.ownerStableTokens.textContent = `所持OP: ${formatMoney(state.balance)}OP`;
+    renderOwnerItemShop();
+  }
+
+  function openMarketModal() {
+    renderOwnerMarketList();
+    el.ownerMarketModal.hidden = false;
+  }
+
+  function closeMarketModal() {
+    el.ownerMarketModal.hidden = true;
+  }
+
+  function renderOwnerMarketList() {
+    el.ownerMarketList.innerHTML = HORSE_MARKET.map((tier) => {
+      const each = Math.floor(tier.statTotal / 3);
+      const affordable = state.balance >= tier.price;
+      return `
+        <div class="owner-market-card">
+          <h4><span class="rank-badge rank-${tier.rank}">${tier.rank}</span>ランク馬</h4>
+          <p>能力値合計 ${tier.statTotal}（各能力 約${each}）</p>
+          <p>価格: ${formatMoney(tier.price)}OP</p>
+          <button data-rank="${tier.rank}" ${affordable ? "" : "disabled"}>購入する</button>
+        </div>
+      `;
+    }).join("");
+    el.ownerMarketList.querySelectorAll("button[data-rank]").forEach((btn) => {
+      btn.addEventListener("click", () => buyMarketHorse(btn.dataset.rank));
+    });
+  }
+
+  function buyMarketHorse(rank) {
+    const tier = HORSE_MARKET.find((t) => t.rank === rank);
+    if (!tier || !state.ownerHorse) return;
+    if (state.balance < tier.price) {
+      alert("所持OPが不足しています");
+      return;
+    }
+    if (!confirm(`${tier.rank}ランク馬を購入すると、現在の${state.ownerHorse.name}と入れ替わります（進行中のクラス・戦績はリセットされます）。よろしいですか？`)) {
+      return;
+    }
+    const defaultName = `${tier.rank}級の新星`;
+    const inputName = typeof prompt === "function" ? prompt("新しい馬名を入力してください", defaultName) : defaultName;
+    const newName = (inputName || defaultName).trim().slice(0, 12) || defaultName;
+    const each = Math.floor(tier.statTotal / 3);
+    const remainder = tier.statTotal - each * 3;
+
+    state.balance -= tier.price;
+    state.ownerHorse = {
+      name: newName,
+      stats: { speed: each + remainder, kick: each, guts: each },
+      jockeyName: state.ownerHorse.jockeyName,
+      jockeyRank: state.ownerHorse.jockeyRank,
+      classIndex: 0,
+      wins: 0,
+      cleared: false,
+      stakesWins: 0,
+      recentResults: [],
+      raceLog: [],
+      nextConditionBoost: false,
+    };
+    saveOwnerState();
+    closeMarketModal();
+    closeStableModal();
+    renderBalance();
+    updateModeInfo();
+    resetForNewRace();
   }
 
   function retireOwnerHorse() {
@@ -1443,6 +1712,11 @@
     state.mode = "owner";
     if (saved && saved.ownerHorse) {
       state.ownerHorse = saved.ownerHorse;
+      // 旧セーブ形式との互換性のため、新フィールドが無ければ補完する
+      state.ownerHorse.recentResults = state.ownerHorse.recentResults || [];
+      state.ownerHorse.raceLog = state.ownerHorse.raceLog || [];
+      state.ownerHorse.stakesWins = state.ownerHorse.stakesWins || 0;
+      state.ownerHorse.nextConditionBoost = !!state.ownerHorse.nextConditionBoost;
       state.balance = typeof saved.balance === "number" ? saved.balance : OWNER_START_TOKENS;
       state.raceNumber = saved.raceNumber || 1;
       el.ownerCreateScreen.hidden = true;
@@ -1494,6 +1768,8 @@
   el.ownerStableBtn.addEventListener("click", openStableModal);
   el.ownerStableCloseBtn.addEventListener("click", closeStableModal);
   el.ownerRetireBtn.addEventListener("click", retireOwnerHorse);
+  el.ownerMarketBtn.addEventListener("click", openMarketModal);
+  el.ownerMarketCloseBtn.addEventListener("click", closeMarketModal);
 
   loadThemePreference();
   applyTheme();

@@ -97,9 +97,37 @@
       <p id="ownerStableClass">クラス: -</p>
       <p id="ownerStableRecord">通算成績: -</p>
       <p id="ownerStableTokens">所持OP: -</p>
+
+      <div class="owner-stable-section">
+        <h3>騎手変更</h3>
+        <div id="ownerJockeyChangeList" class="owner-jockey-list owner-jockey-list-compact"></div>
+      </div>
+
+      <div class="owner-stable-section">
+        <h3>戦績（直近10走）</h3>
+        <div id="ownerRaceLog" class="owner-race-log"></div>
+      </div>
+
+      <div class="owner-stable-section">
+        <h3>アイテムショップ</h3>
+        <div id="ownerItemShop" class="owner-item-shop"></div>
+      </div>
+
       <div class="owner-stable-footer">
+        <button id="ownerMarketBtn">🏪 馬市場</button>
         <button id="ownerRetireBtn">この馬を引退させる</button>
         <button id="ownerStableCloseBtn">閉じる</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="ownerMarketModal" class="owner-stable-modal" hidden>
+    <div class="owner-stable-panel">
+      <h2>🏪 馬市場</h2>
+      <p class="owner-create-intro">OPを消費して、能力が仕上がった馬を購入できます。購入すると現在の馬と入れ替わります（所持OPは引き継がれ、専属騎手はそのまま引き継がれます）。</p>
+      <div id="ownerMarketList" class="owner-market-list"></div>
+      <div class="owner-stable-footer">
+        <button id="ownerMarketCloseBtn">閉じる</button>
       </div>
     </div>
   </div>
