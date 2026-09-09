@@ -253,7 +253,6 @@ body {
   stroke: #000;
   stroke-width: 3px;
   paint-order: stroke;
-  offset-rotate: 0deg;
 }
 
 .race-message {

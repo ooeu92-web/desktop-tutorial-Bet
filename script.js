@@ -311,6 +311,7 @@
     ownerHorse: null,
     ownerStableName: "",
     ownerBetCapBoostActive: false,
+    runnerAnimationId: null,
   };
 
   const el = {
@@ -767,18 +768,36 @@
     `;
   }
 
+  // 馬の走行経路は目に見えない<path>として描画し、JSでgetPointAtLength()を使って
+  // 位置を計算する（CSS Motion Path の offset-path はSVG要素との組み合わせで
+  // iOS Safari系ブラウザで動作しないことがあるため、より互換性の高いこの方式にしている）
   function buildHorseMarkers() {
     return state.horses
       .map((h) => {
         const d = buildRunnerPath(h.lane);
         const cls = h.isOwnerHorse ? "horse-runner-svg owner-horse-runner-svg" : "horse-runner-svg";
-        return `<text id="runner-${h.id}" x="0" y="0" text-anchor="middle" dominant-baseline="central" class="${cls}" style="offset-path: path('${d}'); offset-distance: 0%;"><title>${h.name}</title>🐎${h.lane}</text>`;
+        return `
+          <path id="runner-path-${h.id}" d="${d}" fill="none" stroke="none"></path>
+          <text id="runner-${h.id}" x="0" y="0" text-anchor="middle" dominant-baseline="central" class="${cls}"><title>${h.name}</title>🐎${h.lane}</text>
+        `;
       })
       .join("");
   }
 
+  // 馬のテキスト要素を、その馬専用の経路上の位置（0〜1の割合）に配置する
+  function positionRunnerAt(horseId, fraction) {
+    const pathEl = document.getElementById(`runner-path-${horseId}`);
+    const textEl = document.getElementById(`runner-${horseId}`);
+    if (!pathEl || !textEl) return;
+    const total = pathEl.getTotalLength();
+    const point = pathEl.getPointAtLength(clamp(fraction, 0, 1) * total);
+    textEl.setAttribute("x", point.x);
+    textEl.setAttribute("y", point.y);
+  }
+
   function renderTrack() {
     el.trackSvg.innerHTML = buildTrackDefs() + buildTrackBackground() + buildHorseMarkers();
+    state.horses.forEach((h) => positionRunnerAt(h.id, 0));
   }
 
   const PACE_COMMENTARY = {
@@ -1039,6 +1058,7 @@
       return;
     }
 
+    cancelRunnerAnimation();
     state.weather = pickWeather();
     state.horses = generateHorses();
     if (state.mode === "owner") {
@@ -1258,6 +1278,33 @@
   const RACE_BASE_TIME = 26.0;
   const RACE_GAP_PER_RANK = 0.6;
 
+  // 馬の走行アニメーションをJSで駆動する（CSS Motion Pathに頼らないことで、
+  // iOS Safari系ブラウザでも確実に動作するようにしている）。
+  // durationById: 馬IDごとの所要時間（秒）。elapsedOffset: アニメーション開始時点で
+  // 既に経過しているとみなす時間（秒）。直線までスキップした際の再開に使う。
+  function animateRunners(durationById, elapsedOffset) {
+    cancelRunnerAnimation();
+    const startTime = performance.now();
+    const frame = (now) => {
+      const elapsed = elapsedOffset + (now - startTime) / 1000;
+      let allDone = true;
+      durationById.forEach((duration, horseId) => {
+        const fraction = elapsed / duration;
+        if (fraction < 1) allDone = false;
+        positionRunnerAt(horseId, fraction);
+      });
+      state.runnerAnimationId = allDone ? null : requestAnimationFrame(frame);
+    };
+    state.runnerAnimationId = requestAnimationFrame(frame);
+  }
+
+  function cancelRunnerAnimation() {
+    if (state.runnerAnimationId !== null) {
+      cancelAnimationFrame(state.runnerAnimationId);
+      state.runnerAnimationId = null;
+    }
+  }
+
   function runRace() {
     state.raceRunning = true;
     el.buyBtn.disabled = true;
@@ -1271,21 +1318,11 @@
     state.currentFinishOrder = finishOrder;
     scheduleCommentary(finishOrder, state.lastPaceInfo);
 
+    const durationById = new Map();
     finishOrder.forEach((horseId, rank) => {
-      const runner = document.getElementById(`runner-${horseId}`);
-      const duration = RACE_BASE_TIME + rank * RACE_GAP_PER_RANK;
-      runner.style.transition = `offset-distance ${duration}s linear`;
+      durationById.set(horseId, RACE_BASE_TIME + rank * RACE_GAP_PER_RANK);
     });
-    // 2フレーム分待ってからoffset-distanceを変更する（スマホのSafari等でも
-    // 確実にトランジションが発火するようにするための定番の対策）
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        finishOrder.forEach((horseId) => {
-          const runner = document.getElementById(`runner-${horseId}`);
-          if (runner) runner.style.offsetDistance = "100%";
-        });
-      });
-    });
+    animateRunners(durationById, 0);
 
     const totalTime = RACE_BASE_TIME + (finishOrder.length - 1) * RACE_GAP_PER_RANK;
 
@@ -1302,11 +1339,8 @@
       state.raceTimeoutId = null;
     }
 
-    state.horses.forEach((horse) => {
-      const runner = document.getElementById(`runner-${horse.id}`);
-      runner.style.transition = "none";
-      runner.style.offsetDistance = "100%";
-    });
+    cancelRunnerAnimation();
+    state.horses.forEach((horse) => positionRunnerAt(horse.id, 1));
 
     finishRace(state.currentFinishOrder);
   }
@@ -1325,27 +1359,13 @@
     const totalTime = RACE_BASE_TIME + (finishOrder.length - 1) * RACE_GAP_PER_RANK;
     const tSkip = totalTime * HOME_STRETCH_FRACTION;
 
+    const durationById = new Map();
     finishOrder.forEach((horseId, rank) => {
-      const runner = document.getElementById(`runner-${horseId}`);
       const duration = RACE_BASE_TIME + rank * RACE_GAP_PER_RANK;
-      const pct = Math.min(100, (tSkip / duration) * 100);
-      runner.style.transition = "none";
-      runner.style.offsetDistance = `${pct}%`;
+      durationById.set(horseId, duration);
+      positionRunnerAt(horseId, tSkip / duration);
     });
-    // 2フレーム分待ってからトランジションを再開する（スマホのSafari等でも
-    // 確実にトランジションが発火するようにするための定番の対策）
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        finishOrder.forEach((horseId, rank) => {
-          const runner = document.getElementById(`runner-${horseId}`);
-          if (!runner) return;
-          const duration = RACE_BASE_TIME + rank * RACE_GAP_PER_RANK;
-          const remaining = Math.max(0.3, duration - tSkip);
-          runner.style.transition = `offset-distance ${remaining}s linear`;
-          runner.style.offsetDistance = "100%";
-        });
-      });
-    });
+    animateRunners(durationById, tSkip);
 
     el.trackSvg.classList.add("zoomed");
     el.commentary.textContent = PACE_COMMENTARY[state.lastPaceInfo.category];
@@ -1376,6 +1396,8 @@
     state.raceRunning = false;
     state.raceFinished = true;
     clearCommentary();
+    cancelRunnerAnimation();
+    state.horses.forEach((horse) => positionRunnerAt(horse.id, 1));
 
     const rankById = new Map();
     finishOrder.forEach((id, idx) => rankById.set(id, idx + 1));
