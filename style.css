@@ -256,6 +256,21 @@ body {
 .cond-flat { color: #cccccc; }
 .cond-down { color: #f77; }
 
+.style-badge {
+  display: inline-block;
+  width: 22px;
+  height: 22px;
+  line-height: 22px;
+  border-radius: 4px;
+  font-weight: bold;
+  color: #fff;
+}
+
+.style-badge.style-nige { background: #e53935; }
+.style-badge.style-senko { background: #fb8c00; }
+.style-badge.style-sashi { background: #1e88e5; }
+.style-badge.style-oikomi { background: #8e24aa; }
+
 .combo-preview {
   margin-top: 10px;
   font-size: 0.9em;

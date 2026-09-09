@@ -77,6 +77,31 @@
     return RACE_CLASSES[(raceNumber - 1) % NUM_RACES_PER_DAY];
   }
 
+  // 脚質：実際にどう運ぶかは毎レース変動するため、あくまで「基本の傾向」
+  const RUNNING_STYLES = [
+    { key: "nige", weight: 0.12, baseTendency: 90 },
+    { key: "senko", weight: 0.30, baseTendency: 65 },
+    { key: "sashi", weight: 0.33, baseTendency: 40 },
+    { key: "oikomi", weight: 0.25, baseTendency: 15 },
+  ];
+  const STYLE_ICON = { nige: "逃", senko: "先", sashi: "差", oikomi: "追" };
+  const STYLE_LABEL = { nige: "逃げ", senko: "先行", sashi: "差し", oikomi: "追込" };
+  const STYLE_BASE_TENDENCY = Object.fromEntries(RUNNING_STYLES.map((s) => [s.key, s.baseTendency]));
+  const STYLE_NOISE = 25; // 脚質どおりに運ばないことがあるためのブレ幅
+  const PACE_CONTEST_THRESHOLD = 62; // このレースで先頭集団を争っているとみなす基準値
+  const PACE_HIGH_COUNT = 4; // 先頭集団がこの人数以上ならハイペース
+  const PACE_LOW_COUNT = 1; // 先頭集団がこの人数以下ならスローペース
+
+  function pickRunningStyle() {
+    const r = Math.random();
+    let acc = 0;
+    for (const s of RUNNING_STYLES) {
+      acc += s.weight;
+      if (r < acc) return s.key;
+    }
+    return RUNNING_STYLES[RUNNING_STYLES.length - 1].key;
+  }
+
   const JOCKEY_RANK_MULT = { S: 1.4, A: 1.15, B: 1.0, C: 0.75 };
   const CONDITION_MULT = { up: 1.3, flat: 1.0, down: 0.7 };
   const CONDITION_ICON = { up: "↗️", flat: "➡️", down: "↘️" };
@@ -190,6 +215,7 @@
     raceFinished: false,
     raceTimeoutId: null,
     currentFinishOrder: null,
+    lastPaceInfo: null,
   };
 
   const el = {
@@ -280,6 +306,7 @@
       const formMult = formMultFromLast3(last3);
       const jockey = jockeys[i];
       const jockeyMult = JOCKEY_RANK_MULT[jockey.rank];
+      const runningStyle = pickRunningStyle();
       const condition = pickCondition();
       const conditionMult = CONDITION_MULT[condition];
       const heavyTrackMult = isHeavyTrack ? HEAVY_TRACK_JOCKEY_BONUS[jockey.rank] : 1.0;
@@ -301,7 +328,7 @@
       if (isHeartbeat) horseName = HEARTBEAT_NAME;
       else if (isFrontier) horseName = FRONTIER_NAME;
 
-      return { name: horseName, last3, jockey, condition, trueStrength, marketStrength, isHeartbeat, isFrontier };
+      return { name: horseName, last3, jockey, runningStyle, condition, trueStrength, marketStrength, isHeartbeat, isFrontier };
     });
 
     const marketSum = raw.reduce((s, h) => s + h.marketStrength, 0);
@@ -320,6 +347,7 @@
         last3: h.last3,
         jockeyName: h.jockey.name,
         jockeyRank: h.jockey.rank,
+        runningStyle: h.runningStyle,
         condition: h.condition,
         trueStrength: h.trueStrength,
         marketProb,
@@ -411,6 +439,7 @@
           <span class="rank-badge rank-${horse.jockeyRank}" title="${RANK_LABEL[horse.jockeyRank]}">${horse.jockeyRank}</span>
         </td>
         <td>${horse.last3.join("-")}</td>
+        <td><span class="style-badge style-${horse.runningStyle}" title="${STYLE_LABEL[horse.runningStyle]}">${STYLE_ICON[horse.runningStyle]}</span></td>
         <td class="cond-${horse.condition}">${CONDITION_ICON[horse.condition]} ${CONDITION_LABEL[horse.condition]}</td>
         <td>${horse.oddsWin.toFixed(1)}倍</td>
         <td>${horse.oddsPlace.toFixed(1)}倍</td>
@@ -691,14 +720,44 @@
     el.startBtn.disabled = false;
   }
 
+  // 脚質から「このレースの実際の展開（ペース）」を都度シミュレートする。
+  // 脚質はあくまで基本の傾向で、毎レース必ずそのとおりに運ぶわけではない
+  // （ブレ幅STYLE_NOISEの分だけ先行馬が下がったり差し馬が突っかけたりする）。
+  // 先頭集団を争う頭数が多いほどハイペースで前が止まりやすく、
+  // 少ないほどスローペースで残った先行馬が有利になる。
+  function simulatePace() {
+    const rolls = state.horses.map((h) => ({
+      id: h.id,
+      value: STYLE_BASE_TENDENCY[h.runningStyle] + (Math.random() * 2 - 1) * STYLE_NOISE,
+    }));
+    const frontCount = rolls.filter((r) => r.value >= PACE_CONTEST_THRESHOLD).length;
+
+    let category = "medium";
+    if (frontCount >= PACE_HIGH_COUNT) category = "high";
+    else if (frontCount <= PACE_LOW_COUNT) category = "low";
+
+    const multiplierById = new Map();
+    rolls.forEach((r) => {
+      const isFrontThisRace = r.value >= PACE_CONTEST_THRESHOLD;
+      let mult = 1.0;
+      if (category === "high") mult = isFrontThisRace ? 0.85 : 1.15;
+      else if (category === "low") mult = isFrontThisRace ? 1.2 : 0.9;
+      multiplierById.set(r.id, mult);
+    });
+
+    return { category, frontCount, multiplierById };
+  }
+
   function computeFinishOrder() {
     const heartbeat = state.horses.find((h) => h.isHeartbeat);
     const frontier = state.horses.find((h) => h.isFrontier);
     const { varMin, varMax } = getRaceClass(state.raceNumber);
+    const pace = simulatePace();
+    state.lastPaceInfo = pace;
     const contenders = state.horses.filter((h) => h !== heartbeat && h !== frontier);
     const performances = contenders.map((h) => ({
       id: h.id,
-      score: h.trueStrength * (varMin + Math.random() * (varMax - varMin)),
+      score: h.trueStrength * (varMin + Math.random() * (varMax - varMin)) * pace.multiplierById.get(h.id),
     }));
     performances.sort((a, b) => b.score - a.score);
     const freeOrder = performances.map((p) => p.id);
@@ -769,7 +828,8 @@
     finishOrder.forEach((id, idx) => rankById.set(id, idx + 1));
 
     const winnerHorse = state.horses.find((h) => h.id === finishOrder[0]);
-    el.raceMessage.textContent = `🏆 1着: ${winnerHorse.name}！`;
+    const paceLabel = { high: "🔥 ハイペース", low: "🐌 スローペース", medium: "◻️ ミドルペース" }[state.lastPaceInfo.category];
+    el.raceMessage.textContent = `🏆 1着: ${winnerHorse.name}！（展開: ${paceLabel}）`;
     renderMyResult(finishOrder);
 
     let totalPayout = 0;
