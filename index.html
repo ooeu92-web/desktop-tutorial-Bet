@@ -17,11 +17,13 @@
         所持金 <span id="balance">10,000</span> 円
       </div>
       <button id="lobbyReturnBtn" class="lobby-return-btn" hidden>🏠 ロビー</button>
+      <button id="themeToggleBtn" class="theme-toggle-btn">🌙 ダーク</button>
     </div>
   </header>
 
   <section id="lobbyScreen" class="lobby-screen">
     <h2>モードを選択してください</h2>
+    <button id="continueBtn" class="continue-btn" hidden>▶ 続きから再開</button>
     <div class="mode-cards">
       <div class="mode-card">
         <h3>一般人モード</h3>
@@ -32,11 +34,6 @@
         <h3>ギャンブラーモード</h3>
         <p>所持金1万円から10万円到達を目指す、何レースで達成できるかのアタックモードです。</p>
         <button class="mode-select-btn" data-mode="gambler">スタート</button>
-      </div>
-      <div class="mode-card">
-        <h3>ギャンブラーモード HARD</h3>
-        <p>所持金1万円から100万円到達を目指す、超高難度アタックモードです。</p>
-        <button class="mode-select-btn" data-mode="gamblerHard">スタート</button>
       </div>
       <div class="mode-card">
         <h3>資金無限モード</h3>
@@ -53,7 +50,7 @@
         <button id="surfaceToggleBtn" class="surface-toggle-btn">🟤 ダート</button>
       </div>
       <div class="track-wrap">
-        <svg id="trackSvg" viewBox="0 0 1000 420" preserveAspectRatio="xMidYMid meet"></svg>
+        <svg id="trackSvg" viewBox="0 0 1050 460" preserveAspectRatio="xMidYMid meet"></svg>
       </div>
       <div id="raceMessage" class="race-message">馬を選んで馬券を購入してください</div>
       <div id="commentary" class="commentary"></div>

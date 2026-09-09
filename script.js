@@ -104,7 +104,6 @@
 
   const JOCKEY_RANK_MULT = { S: 1.4, A: 1.15, B: 1.0, C: 0.75 };
   const CONDITION_MULT = { up: 1.3, flat: 1.0, down: 0.7 };
-  const CONDITION_ICON = { up: "↗️", flat: "➡️", down: "↘️" };
   const CONDITION_LABEL = { up: "絶好調", flat: "普通", down: "不調" };
   const RANK_LABEL = { S: "Sランク", A: "Aランク", B: "Bランク", C: "Cランク" };
 
@@ -133,7 +132,6 @@
   const GAME_MODES = {
     normal: { label: "一般人モード", goal: null },
     gambler: { label: "ギャンブラーモード", goal: 100000 },
-    gamblerHard: { label: "ギャンブラーモードHARD", goal: 1000000 },
     infinite: { label: "資金無限モード", goal: null, infinite: true },
   };
 
@@ -141,10 +139,10 @@
   // より広く大きいコースにし、ゴールは直線（ホームストレート）の左側に置くことで
   // ターンを立ち上がってからゴールまでの直線を長く見せる
   const TRACK = {
-    baseXLeft: 170,
-    baseXRight: 830,
-    baseYTop: 50,
-    baseYBottom: 370,
+    baseXLeft: 150,
+    baseXRight: 900,
+    baseYTop: 40,
+    baseYBottom: 410,
     outerRailInset: 8,
     laneWidth: 12,
     numLanes: NUM_HORSES,
@@ -152,8 +150,8 @@
   TRACK.innerRailInset = TRACK.outerRailInset + TRACK.laneWidth * TRACK.numLanes;
   const FINISH_X = 320;
   const START_X = 280;
-  const MERGE_X = 400;
-  const MERGE_RUN = 70;
+  const MERGE_X = 420;
+  const MERGE_RUN = 80;
 
   // スタート後、外枠の馬ほど大きくインコースへ寄っていく「クルーズレーン」
   // （実際の競馬のように内に寄る動きを再現しつつ、番号の視認性を保つため
@@ -186,6 +184,9 @@
     return CRUISE.innerRailInset - CRUISE.laneWidth * (waku - 0.5);
   }
 
+  const VIEWBOX_WIDTH = 1050;
+  const VIEWBOX_HEIGHT = 460;
+
   // 各馬の実際の走行経路：スタート直後は枠なりに広がっているが、
   // 序盤で内側のクルーズレーンへ寄っていき、そのままゴール（直線左側）まで走る
   function buildRunnerPath(waku) {
@@ -206,6 +207,7 @@
     balance: START_BALANCE,
     raceNumber: 1,
     surface: "dirt",
+    theme: "dark",
     weather: { type: "clear", trackCondition: "good" },
     horses: [],
     selectedHorseId: null,
@@ -227,6 +229,8 @@
     lobbyReturnBtn: document.getElementById("lobbyReturnBtn"),
     weatherBox: document.getElementById("weatherBox"),
     surfaceToggleBtn: document.getElementById("surfaceToggleBtn"),
+    themeToggleBtn: document.getElementById("themeToggleBtn"),
+    continueBtn: document.getElementById("continueBtn"),
     raceNumber: document.getElementById("raceNumber"),
     raceClass: document.getElementById("raceClass"),
     trackSvg: document.getElementById("trackSvg"),
@@ -442,7 +446,7 @@
         </td>
         <td>${horse.last3.join("-")}</td>
         <td><span class="style-badge style-${horse.runningStyle}" title="${STYLE_LABEL[horse.runningStyle]}">${STYLE_ICON[horse.runningStyle]}</span></td>
-        <td class="cond-${horse.condition}">${CONDITION_ICON[horse.condition]} ${CONDITION_LABEL[horse.condition]}</td>
+        <td class="cond-${horse.condition}">${CONDITION_LABEL[horse.condition]}</td>
         <td>${horse.oddsWin.toFixed(1)}倍</td>
         <td>${horse.oddsPlace.toFixed(1)}倍</td>
         <td>${selectInput}</td>
@@ -557,10 +561,27 @@
     el.commentary.textContent = "";
   }
 
+  function resetZoom() {
+    el.trackSvg.classList.remove("zoomed");
+  }
+
+  // 直線（ホームストレート）に入ったタイミングでズームインし、迫力を出す
+  function scheduleZoom(totalTime) {
+    const midGeom = geometryAt(cruiseInset(4.5));
+    const originX = ((FINISH_X + (midGeom.xRight - FINISH_X) * 0.35) / VIEWBOX_WIDTH) * 100;
+    const originY = (midGeom.yBottom / VIEWBOX_HEIGHT) * 100;
+    el.trackSvg.style.transformOrigin = `${originX}% ${originY}%`;
+    const zoomTimeout = setTimeout(() => {
+      el.trackSvg.classList.add("zoomed");
+    }, totalTime * 650);
+    state.commentaryTimeouts.push(zoomTimeout);
+  }
+
   // レース経過に合わせて、先頭集団・展開・終盤の攻防を実況する
   function scheduleCommentary(finishOrder, pace) {
     clearCommentary();
     const totalTime = RACE_BASE_TIME + (finishOrder.length - 1) * RACE_GAP_PER_RANK;
+    scheduleZoom(totalTime);
 
     const frontRunnerNames = state.horses
       .filter((h) => pace.frontRunnerIds.includes(h.id))
@@ -576,15 +597,17 @@
       el.commentary.textContent = PACE_COMMENTARY[pace.category];
     }, totalTime * 550);
 
+    // 実況と映像の食い違いを防ぐため、宣言上の脚質ではなく
+    // 「このレースで実際に先頭集団にいたか」で終盤の実況を決める
     const winner = state.horses.find((h) => h.id === finishOrder[0]);
-    const isCloserWin = winner.runningStyle === "sashi" || winner.runningStyle === "oikomi";
+    const winnerWasFrontRunner = pace.frontRunnerIds.includes(winner.id);
     const t3 = setTimeout(() => {
-      el.commentary.textContent = isCloserWin
-        ? `📢 直線、${winner.name}が鋭く差してきた！`
-        : `📢 ${winner.name}が粘る！このまま押し切るか`;
+      el.commentary.textContent = winnerWasFrontRunner
+        ? `📢 ${winner.name}が粘る！このまま押し切った！`
+        : `📢 直線、${winner.name}が鋭く差してきた！`;
     }, totalTime * 850);
 
-    state.commentaryTimeouts = [t1, t2, t3];
+    state.commentaryTimeouts.push(t1, t2, t3);
   }
 
   function renderMyResult(finishOrder) {
@@ -624,6 +647,88 @@
     state.surface = state.surface === "dirt" ? "turf" : "dirt";
     renderSurfaceToggle();
     renderTrack();
+    saveGame();
+  }
+
+  const THEME_KEY = "bettingDerbyTheme";
+  const SAVE_KEY = "bettingDerbySave_v1";
+
+  function applyTheme() {
+    document.documentElement.setAttribute("data-theme", state.theme);
+    el.themeToggleBtn.textContent = state.theme === "light" ? "☀️ ライト" : "🌙 ダーク";
+  }
+
+  function toggleTheme() {
+    state.theme = state.theme === "dark" ? "light" : "dark";
+    applyTheme();
+    try {
+      localStorage.setItem(THEME_KEY, state.theme);
+    } catch (e) {
+      // localStorage unavailable（プライベートモード等）は無視する
+    }
+  }
+
+  function loadThemePreference() {
+    try {
+      const saved = localStorage.getItem(THEME_KEY);
+      if (saved === "light" || saved === "dark") state.theme = saved;
+    } catch (e) {
+      // localStorage unavailable（プライベートモード等）は無視する
+    }
+  }
+
+  // 所持金・レース進行状況などをブラウザに保存し、次回続きから再開できるようにする
+  function saveGame() {
+    try {
+      const snapshot = {
+        mode: state.mode,
+        goalAmount: state.goalAmount,
+        attemptRaceCount: state.attemptRaceCount,
+        goalAchieved: state.goalAchieved,
+        totalWagered: state.totalWagered,
+        totalPayout: state.totalPayout,
+        totalTickets: state.totalTickets,
+        totalHits: state.totalHits,
+        balance: state.balance,
+        raceNumber: state.raceNumber,
+        surface: state.surface,
+        historyHtml: el.historyBody.innerHTML,
+      };
+      localStorage.setItem(SAVE_KEY, JSON.stringify(snapshot));
+    } catch (e) {
+      // localStorage unavailable（プライベートモード・容量超過等）は無視する
+    }
+  }
+
+  function loadSavedGame() {
+    try {
+      const raw = localStorage.getItem(SAVE_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function resumeGame(save) {
+    if (!save || !save.mode) return;
+    state.mode = save.mode;
+    state.goalAmount = save.goalAmount ?? GAME_MODES[save.mode]?.goal ?? null;
+    state.attemptRaceCount = save.attemptRaceCount || 0;
+    state.goalAchieved = !!save.goalAchieved;
+    state.totalWagered = save.totalWagered || 0;
+    state.totalPayout = save.totalPayout || 0;
+    state.totalTickets = save.totalTickets || 0;
+    state.totalHits = save.totalHits || 0;
+    state.balance = typeof save.balance === "number" ? save.balance : START_BALANCE;
+    state.raceNumber = save.raceNumber || 1;
+    state.surface = save.surface === "turf" ? "turf" : "dirt";
+    el.historyBody.innerHTML = save.historyHtml || "";
+    el.lobbyScreen.hidden = true;
+    el.gameScreen.hidden = false;
+    el.lobbyReturnBtn.hidden = false;
+    renderBalance();
+    updateModeInfo();
+    resetForNewRace();
   }
 
   function ticketLabel(ticket) {
@@ -676,6 +781,7 @@
     el.raceMessage.textContent = "馬を選んで馬券を購入してください";
     el.myResultInfo.textContent = "";
     clearCommentary();
+    resetZoom();
     el.raceNumber.textContent = state.raceNumber;
     el.raceClass.textContent = getRaceClass(state.raceNumber).name;
     el.startBtn.disabled = true;
@@ -690,6 +796,7 @@
     renderComboPreview();
     renderTrack();
     renderTicketInfo();
+    saveGame();
   }
 
   function showGameOver() {
@@ -763,6 +870,7 @@
     renderTicketInfo();
     updateBuyAvailability();
     el.startBtn.disabled = false;
+    saveGame();
   }
 
   // 脚質から「このレースの実際の展開（ペース）」を都度シミュレートする。
@@ -820,7 +928,7 @@
     return order;
   }
 
-  const RACE_BASE_TIME = 21.0;
+  const RACE_BASE_TIME = 26.0;
   const RACE_GAP_PER_RANK = 0.6;
 
   function runRace() {
@@ -877,7 +985,7 @@
     finishOrder.forEach((id, idx) => rankById.set(id, idx + 1));
 
     const winnerHorse = state.horses.find((h) => h.id === finishOrder[0]);
-    const paceLabel = { high: "🔥 ハイペース", low: "🐌 スローペース", medium: "◻️ ミドルペース" }[state.lastPaceInfo.category];
+    const paceLabel = { high: "ハイペース", low: "スローペース", medium: "ミドルペース" }[state.lastPaceInfo.category];
     el.raceMessage.textContent = `🏆 1着: ${winnerHorse.name}！（展開: ${paceLabel}）`;
     renderMyResult(finishOrder);
 
@@ -943,6 +1051,7 @@
     el.watchOnlyBtn.disabled = true;
     el.skipBtn.disabled = true;
     state.currentFinishOrder = null;
+    saveGame();
   }
 
   function nextRace() {
@@ -996,6 +1105,11 @@
   el.restartBtn.addEventListener("click", restartGame);
   el.lobbyReturnBtn.addEventListener("click", returnToLobby);
   el.surfaceToggleBtn.addEventListener("click", toggleSurface);
+  el.themeToggleBtn.addEventListener("click", toggleTheme);
+  el.continueBtn.addEventListener("click", () => {
+    const save = loadSavedGame();
+    if (save) resumeGame(save);
+  });
   el.betType.addEventListener("change", () => {
     state.selectedHorseId = null;
     state.selectedHorseIds = [];
@@ -1005,4 +1119,10 @@
   document.querySelectorAll(".mode-select-btn").forEach((btn) => {
     btn.addEventListener("click", () => selectMode(btn.dataset.mode));
   });
+
+  loadThemePreference();
+  applyTheme();
+  if (loadSavedGame()) {
+    el.continueBtn.hidden = false;
+  }
 })();
