@@ -11,6 +11,8 @@
     "パープルレイン", "ゴールドラッシュ", "シルクロード", "ワイルドカード",
     "ネオンライト", "クリスタルウィング", "サウザンドドリーム", "レッドインパルス",
     "リーヅモピンフ", "ハラキリドライブ", "インパクトラッシュ",
+    "アストラルビート", "クイックシルバー", "バーニングソウル",
+    "ミラクルヴォイス", "ダイヤモンドクロス", "セイントグロリア",
   ];
 
   // 20レースに1回ほど現れる、必ず勝つ大穴の特別な馬
@@ -29,14 +31,20 @@
     { name: "岩田望来", rank: "A" },
     { name: "松山弘平", rank: "A" },
     { name: "戸崎圭太", rank: "A" },
+    { name: "古川吉弘", rank: "A" },
     { name: "丹内祐二", rank: "B" },
     { name: "鮫島克駿", rank: "B" },
     { name: "横山武史", rank: "B" },
     { name: "西村淳也", rank: "B" },
     { name: "横山和生", rank: "B" },
     { name: "荻野極", rank: "B" },
+    { name: "坂井瑠星", rank: "B" },
+    { name: "津村明秀", rank: "B" },
+    { name: "三浦皇成", rank: "B" },
+    { name: "M.デムーロ", rank: "B" },
     { name: "今村聖奈", rank: "C" },
-    { name: "坂井瑠星", rank: "C" },
+    { name: "丸山元気", rank: "C" },
+    { name: "菱田裕二", rank: "C" },
   ];
 
   // 出現率が極端に低い特別な騎手（毎レースの通常抽選とは別枠で判定する）
@@ -165,6 +173,21 @@
   const STAKES_WINS_FOR_GI = 2; // 重賞を何勝したらGIに挑戦できるか
   const OWNER_SAVE_KEY = "bettingDerbyOwnerSave_v1";
 
+  // クラスごとの1着賞金（OP）
+  const OWNER_CLASS_PRIZE = {
+    未勝利: 50,
+    "1勝クラス": 50,
+    "2勝クラス": 100,
+    "3勝クラス": 100,
+    オープン: 150,
+    重賞: 200,
+    GI: 500,
+  };
+
+  // 馬主モードの1回あたりの馬券購入上限（アイテムで一時的に引き上げ可能）
+  const OWNER_MAX_BET = 300;
+  const OWNER_MAX_BET_BOOSTED = 500;
+
   // OPを消費してあらかじめ能力の仕上がった馬を購入できる馬市場
   const HORSE_MARKET = [
     { rank: "C", statTotal: 165, price: 450 },
@@ -180,6 +203,12 @@
       name: "絶好調ドリンク",
       desc: "次のレース、愛馬が必ず絶好調になる",
       price: 220,
+    },
+    {
+      id: "betCapBoost",
+      name: "資金限度アップ",
+      desc: `次のレースだけ、1回の購入上限が${OWNER_MAX_BET_BOOSTED}OPに上がる`,
+      price: 50,
     },
   ];
 
@@ -279,6 +308,7 @@
     lastPaceInfo: null,
     commentaryTimeouts: [],
     ownerHorse: null,
+    ownerBetCapBoostActive: false,
   };
 
   const el = {
@@ -334,6 +364,7 @@
     horseTableBody: document.getElementById("horseTableBody"),
     betType: document.getElementById("betType"),
     betAmount: document.getElementById("betAmount"),
+    betLimitHint: document.getElementById("betLimitHint"),
     buyBtn: document.getElementById("buyBtn"),
     startBtn: document.getElementById("startBtn"),
     watchOnlyBtn: document.getElementById("watchOnlyBtn"),
@@ -969,6 +1000,11 @@
     el.historyBody.prepend(tr);
   }
 
+  // 馬主モードの現在の馬券購入上限（アイテムで一時的に引き上げられていればそちらを返す）
+  function ownerMaxBet() {
+    return state.ownerBetCapBoostActive ? OWNER_MAX_BET_BOOSTED : OWNER_MAX_BET;
+  }
+
   function resetForNewRace() {
     if (state.mode !== "infinite" && state.balance < MIN_BET) {
       showGameOver();
@@ -982,10 +1018,18 @@
       state.selectedHorseId = ownerH ? ownerH.id : null;
       el.umarenOption.hidden = true;
       if (el.betType.value === "umaren") el.betType.value = "win";
-      if (state.ownerHorse) state.ownerHorse.nextConditionBoost = false;
+      if (state.ownerHorse) {
+        state.ownerHorse.nextConditionBoost = false;
+        state.ownerBetCapBoostActive = !!state.ownerHorse.nextBetCapBoost;
+        state.ownerHorse.nextBetCapBoost = false;
+      }
+      el.betAmount.max = String(ownerMaxBet());
+      el.betLimitHint.textContent = `（1回の購入上限 ${ownerMaxBet()}OP${state.ownerBetCapBoostActive ? "・ブースト中" : ""}）`;
     } else {
       state.selectedHorseId = null;
       el.umarenOption.hidden = false;
+      el.betAmount.removeAttribute("max");
+      el.betLimitHint.textContent = "";
     }
     state.selectedHorseIds = [];
     state.tickets = [];
@@ -1069,6 +1113,10 @@
     }
     if (amount > state.balance && state.mode !== "infinite") {
       alert(state.mode === "owner" ? "所持OPが不足しています" : "所持金が不足しています");
+      return;
+    }
+    if (state.mode === "owner" && amount > ownerMaxBet()) {
+      alert(`馬主モードでは1回の購入上限は${ownerMaxBet()}OPです`);
       return;
     }
 
@@ -1354,6 +1402,12 @@
       }
 
       if (ownerRank === 1) {
+        const prize = OWNER_CLASS_PRIZE[raceClassName] || 0;
+        if (prize > 0) {
+          state.balance += prize;
+          renderBalance();
+          el.raceMessage.textContent += ` 💰賞金 ${prize}OP獲得！`;
+        }
         state.ownerHorse.wins++;
         const classIdx = state.ownerHorse.classIndex;
         if (raceClassName === "重賞") {
@@ -1580,6 +1634,7 @@
       recentResults: [],
       raceLog: [],
       nextConditionBoost: false,
+      nextBetCapBoost: false,
     };
     state.balance -= hireCost;
     state.raceNumber = 1;
@@ -1675,10 +1730,16 @@
       .join("");
   }
 
+  function isOwnerItemActive(item) {
+    if (item.id === "peakCondition") return !!state.ownerHorse.nextConditionBoost;
+    if (item.id === "betCapBoost") return !!state.ownerHorse.nextBetCapBoost;
+    return false;
+  }
+
   function renderOwnerItemShop() {
     if (!state.ownerHorse) return;
     el.ownerItemShop.innerHTML = OWNER_ITEMS.map((item) => {
-      const active = item.id === "peakCondition" && state.ownerHorse.nextConditionBoost;
+      const active = isOwnerItemActive(item);
       const disabled = active || state.balance < item.price;
       return `
         <div class="owner-item-row">
@@ -1695,13 +1756,14 @@
   function buyOwnerItem(itemId) {
     const item = OWNER_ITEMS.find((i) => i.id === itemId);
     if (!item || !state.ownerHorse) return;
-    if (item.id === "peakCondition" && state.ownerHorse.nextConditionBoost) return;
+    if (isOwnerItemActive(item)) return;
     if (state.balance < item.price) {
       alert("所持OPが不足しています");
       return;
     }
     state.balance -= item.price;
     if (item.id === "peakCondition") state.ownerHorse.nextConditionBoost = true;
+    if (item.id === "betCapBoost") state.ownerHorse.nextBetCapBoost = true;
     renderBalance();
     saveOwnerState();
     el.ownerStableTokens.textContent = `所持OP: ${formatMoney(state.balance)}OP`;
@@ -1764,6 +1826,7 @@
       recentResults: [],
       raceLog: [],
       nextConditionBoost: false,
+      nextBetCapBoost: false,
     };
     saveOwnerState();
     closeMarketModal();
@@ -1796,6 +1859,7 @@
       state.ownerHorse.raceLog = state.ownerHorse.raceLog || [];
       state.ownerHorse.stakesWins = state.ownerHorse.stakesWins || 0;
       state.ownerHorse.nextConditionBoost = !!state.ownerHorse.nextConditionBoost;
+      state.ownerHorse.nextBetCapBoost = !!state.ownerHorse.nextBetCapBoost;
       state.balance = typeof saved.balance === "number" ? saved.balance : OWNER_START_TOKENS;
       state.raceNumber = saved.raceNumber || 1;
       el.ownerCreateScreen.hidden = true;

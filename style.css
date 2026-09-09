@@ -400,6 +400,11 @@ body {
   gap: 4px;
 }
 
+.bet-limit-hint {
+  font-size: 0.85em;
+  color: var(--text-muted);
+}
+
 input, select {
   padding: 6px;
   border-radius: 4px;
