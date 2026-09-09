@@ -45,13 +45,15 @@
     { name: "F.デットーリ", rank: "S", chance: 1 / 50 },
   ];
 
-  function pickJockeysForRace() {
+  function pickJockeysForRace(count = NUM_HORSES, excludeNames = []) {
     const chosen = [];
     RARE_JOCKEYS.forEach((rj) => {
+      if (excludeNames.includes(rj.name)) return;
       if (Math.random() < rj.chance) chosen.push({ name: rj.name, rank: rj.rank });
     });
-    const regularNeeded = NUM_HORSES - chosen.length;
-    const regularPicked = shuffle(JOCKEY_POOL).slice(0, regularNeeded);
+    const pool = JOCKEY_POOL.filter((j) => !excludeNames.includes(j.name));
+    const regularNeeded = count - chosen.length;
+    const regularPicked = shuffle(pool).slice(0, regularNeeded);
     return shuffle([...chosen, ...regularPicked]);
   }
 
@@ -75,6 +77,14 @@
 
   function getRaceClass(raceNumber) {
     return RACE_CLASSES[(raceNumber - 1) % NUM_RACES_PER_DAY];
+  }
+
+  // 馬主モードでは通常のレース番号ではなく、自厩馬の現在クラスを使う
+  function currentRaceClass() {
+    if (state.mode === "owner" && state.ownerHorse) {
+      return OWNER_CLASSES[state.ownerHorse.classIndex];
+    }
+    return getRaceClass(state.raceNumber);
   }
 
   // 脚質：実際にどう運ぶかは毎レース変動するため、あくまで「基本の傾向」
@@ -134,6 +144,28 @@
     gambler: { label: "ギャンブラーモード", goal: 100000 },
     infinite: { label: "資金無限モード", goal: null, infinite: true },
   };
+
+  // --- 馬主モード ---
+  const OWNER_STAT_TOTAL = 150;
+  const OWNER_STAT_MIN = 10;
+  const OWNER_START_TOKENS = 3000;
+  const OWNER_JOCKEY_HIRE_COST = { S: 500, A: 250, B: 100, C: 30 };
+  const OWNER_CLASSES = [
+    { name: "未勝利", varMin: 0.5, varMax: 1.65 },
+    { name: "1勝クラス", varMin: 0.68, varMax: 1.35 },
+    { name: "2勝クラス", varMin: 0.75, varMax: 1.28 },
+    { name: "3勝クラス", varMin: 0.8, varMax: 1.22 },
+    { name: "オープン", varMin: 0.85, varMax: 1.18 },
+    { name: "重賞", varMin: 0.9, varMax: 1.15 },
+  ];
+  const OWNER_SAVE_KEY = "bettingDerbyOwnerSave_v1";
+
+  function styleFromSpeed(speed) {
+    if (speed >= 75) return "nige";
+    if (speed >= 50) return "senko";
+    if (speed >= 25) return "sashi";
+    return "oikomi";
+  }
 
   // --- コース形状（楕円トラック）のジオメトリ ---
   // より広く大きいコースにし、ゴールは直線（ホームストレート）の左側に置くことで
@@ -219,10 +251,13 @@
     currentFinishOrder: null,
     lastPaceInfo: null,
     commentaryTimeouts: [],
+    ownerHorse: null,
   };
 
   const el = {
     balance: document.getElementById("balance"),
+    balanceLabel: document.getElementById("balanceLabel"),
+    balanceUnit: document.getElementById("balanceUnit"),
     modeInfo: document.getElementById("modeInfo"),
     lobbyScreen: document.getElementById("lobbyScreen"),
     gameScreen: document.getElementById("gameScreen"),
@@ -231,6 +266,30 @@
     surfaceToggleBtn: document.getElementById("surfaceToggleBtn"),
     themeToggleBtn: document.getElementById("themeToggleBtn"),
     continueBtn: document.getElementById("continueBtn"),
+    umarenOption: document.getElementById("umarenOption"),
+    ownerStableBtn: document.getElementById("ownerStableBtn"),
+    ownerCreateScreen: document.getElementById("ownerCreateScreen"),
+    ownerHorseName: document.getElementById("ownerHorseName"),
+    statSpeed: document.getElementById("statSpeed"),
+    statSpeedValue: document.getElementById("statSpeedValue"),
+    statKick: document.getElementById("statKick"),
+    statKickValue: document.getElementById("statKickValue"),
+    statGutsBar: document.getElementById("statGutsBar"),
+    statGutsValue: document.getElementById("statGutsValue"),
+    ownerJockeyList: document.getElementById("ownerJockeyList"),
+    ownerCreateError: document.getElementById("ownerCreateError"),
+    ownerDebutBtn: document.getElementById("ownerDebutBtn"),
+    ownerStableModal: document.getElementById("ownerStableModal"),
+    ownerStableName: document.getElementById("ownerStableName"),
+    ownerStableSpeed: document.getElementById("ownerStableSpeed"),
+    ownerStableKick: document.getElementById("ownerStableKick"),
+    ownerStableGuts: document.getElementById("ownerStableGuts"),
+    ownerStableJockey: document.getElementById("ownerStableJockey"),
+    ownerStableClass: document.getElementById("ownerStableClass"),
+    ownerStableRecord: document.getElementById("ownerStableRecord"),
+    ownerStableTokens: document.getElementById("ownerStableTokens"),
+    ownerRetireBtn: document.getElementById("ownerRetireBtn"),
+    ownerStableCloseBtn: document.getElementById("ownerStableCloseBtn"),
     raceNumber: document.getElementById("raceNumber"),
     raceClass: document.getElementById("raceClass"),
     trackSvg: document.getElementById("trackSvg"),
@@ -297,22 +356,55 @@
   }
 
   function generateHorses() {
-    const names = shuffle(HORSE_POOL).slice(0, NUM_HORSES);
-    const jockeys = pickJockeysForRace();
-    const heartbeatIndex = Math.random() < HEARTBEAT_CHANCE ? Math.floor(Math.random() * NUM_HORSES) : -1;
-    let frontierIndex = Math.random() < FRONTIER_CHANCE ? Math.floor(Math.random() * NUM_HORSES) : -1;
-    if (frontierIndex === heartbeatIndex) frontierIndex = -1;
+    const isOwnerRace = state.mode === "owner" && !!state.ownerHorse;
+    const ownerIndex = isOwnerRace ? Math.floor(Math.random() * NUM_HORSES) : -1;
+    const aiCount = isOwnerRace ? NUM_HORSES - 1 : NUM_HORSES;
+    const aiNames = shuffle(HORSE_POOL).slice(0, aiCount);
+    const aiJockeys = isOwnerRace
+      ? pickJockeysForRace(aiCount, [state.ownerHorse.jockeyName])
+      : pickJockeysForRace(aiCount);
+
+    const names = [];
+    const jockeys = [];
+    let aiCursor = 0;
+    for (let i = 0; i < NUM_HORSES; i++) {
+      if (i === ownerIndex) {
+        names.push(state.ownerHorse.name);
+        jockeys.push({ name: state.ownerHorse.jockeyName, rank: state.ownerHorse.jockeyRank });
+      } else {
+        names.push(aiNames[aiCursor]);
+        jockeys.push(aiJockeys[aiCursor]);
+        aiCursor++;
+      }
+    }
+
+    let heartbeatIndex = -1;
+    let frontierIndex = -1;
+    if (Math.random() < HEARTBEAT_CHANCE) {
+      let idx;
+      do { idx = Math.floor(Math.random() * NUM_HORSES); } while (idx === ownerIndex);
+      heartbeatIndex = idx;
+    }
+    if (Math.random() < FRONTIER_CHANCE) {
+      let idx;
+      do { idx = Math.floor(Math.random() * NUM_HORSES); } while (idx === ownerIndex || idx === heartbeatIndex);
+      frontierIndex = idx;
+    }
     const isHeavyTrack = state.weather.trackCondition === "heavy";
 
     const raw = names.map((name, i) => {
       const isHeartbeat = i === heartbeatIndex;
       const isFrontier = i === frontierIndex;
-      const base = isHeartbeat ? 15 + Math.random() * 10 : 20 + Math.random() * 90;
+      const isOwnerHorse = i === ownerIndex;
+      let base;
+      if (isHeartbeat) base = 15 + Math.random() * 10;
+      else if (isOwnerHorse) base = 65 * (0.7 + (state.ownerHorse.stats.speed / 100) * 0.6);
+      else base = 20 + Math.random() * 90;
       const last3 = randomLast3();
       const formMult = formMultFromLast3(last3);
       const jockey = jockeys[i];
       const jockeyMult = JOCKEY_RANK_MULT[jockey.rank];
-      const runningStyle = pickRunningStyle();
+      const runningStyle = isOwnerHorse ? styleFromSpeed(state.ownerHorse.stats.speed) : pickRunningStyle();
       const condition = pickCondition();
       const conditionMult = CONDITION_MULT[condition];
       const heavyTrackMult = isHeavyTrack ? HEAVY_TRACK_JOCKEY_BONUS[jockey.rank] : 1.0;
@@ -334,7 +426,7 @@
       if (isHeartbeat) horseName = HEARTBEAT_NAME;
       else if (isFrontier) horseName = FRONTIER_NAME;
 
-      return { name: horseName, last3, jockey, runningStyle, condition, trueStrength, marketStrength, isHeartbeat, isFrontier };
+      return { name: horseName, last3, jockey, runningStyle, condition, trueStrength, marketStrength, isHeartbeat, isFrontier, isOwnerHorse };
     });
 
     const marketSum = raw.reduce((s, h) => s + h.marketStrength, 0);
@@ -361,6 +453,7 @@
         oddsPlace,
         isHeartbeat: h.isHeartbeat,
         isFrontier: h.isFrontier,
+        isOwnerHorse: h.isOwnerHorse,
       };
     });
 
@@ -397,10 +490,28 @@
   }
 
   function renderBalance() {
+    if (state.mode === "owner") {
+      el.balanceLabel.textContent = "所持OP";
+      el.balanceUnit.textContent = "OP";
+      el.balance.textContent = formatMoney(state.balance);
+      return;
+    }
+    el.balanceLabel.textContent = "所持金";
+    el.balanceUnit.textContent = "円";
     el.balance.textContent = state.mode === "infinite" ? "∞" : formatMoney(state.balance);
   }
 
   function updateModeInfo() {
+    if (state.mode === "owner") {
+      if (!state.ownerHorse) {
+        el.modeInfo.hidden = true;
+        return;
+      }
+      el.modeInfo.hidden = false;
+      const cls = OWNER_CLASSES[state.ownerHorse.classIndex].name;
+      el.modeInfo.textContent = `🐴 ${state.ownerHorse.name}（${cls}・通算${state.ownerHorse.wins}勝）${state.ownerHorse.cleared ? " 🏆重賞制覇" : ""}`;
+      return;
+    }
     if (!state.mode || state.mode === "normal") {
       el.modeInfo.hidden = true;
       return;
@@ -428,14 +539,21 @@
   function renderHorseTable() {
     el.horseTableBody.innerHTML = "";
     const umaren = isUmarenMode();
+    const isOwnerRace = state.mode === "owner";
     state.horses.forEach((horse) => {
       const tr = document.createElement("tr");
       tr.dataset.horseId = horse.id;
       if (isHorseSelected(horse.id)) tr.classList.add("selected");
+      if (horse.isOwnerHorse) tr.classList.add("owner-horse-row");
 
-      const selectInput = umaren
-        ? `<input type="checkbox" ${isHorseSelected(horse.id) ? "checked" : ""}>`
-        : `<input type="radio" name="horseSelect" ${isHorseSelected(horse.id) ? "checked" : ""}>`;
+      let selectInput;
+      if (isOwnerRace) {
+        selectInput = horse.isOwnerHorse ? '<span class="owner-badge">🐴 自厩馬</span>' : "-";
+      } else if (umaren) {
+        selectInput = `<input type="checkbox" ${isHorseSelected(horse.id) ? "checked" : ""}>`;
+      } else {
+        selectInput = `<input type="radio" name="horseSelect" ${isHorseSelected(horse.id) ? "checked" : ""}>`;
+      }
 
       tr.innerHTML = `
         <td>${horse.lane}</td>
@@ -454,6 +572,7 @@
 
       tr.addEventListener("click", () => {
         if (state.raceRunning || state.raceFinished) return;
+        if (isOwnerRace) return; // 馬主モードでは自厩馬に選択が固定される
         if (isUmarenMode()) {
           const idx = state.selectedHorseIds.indexOf(horse.id);
           if (idx >= 0) {
@@ -679,6 +798,7 @@
 
   // 所持金・レース進行状況などをブラウザに保存し、次回続きから再開できるようにする
   function saveGame() {
+    if (state.mode === "owner") return; // 馬主モードは専用のセーブ枠(OWNER_SAVE_KEY)を使う
     try {
       const snapshot = {
         mode: state.mode,
@@ -745,22 +865,24 @@
       el.ticketInfo.textContent = "";
       return;
     }
+    const unit = state.mode === "owner" ? "OP" : "円";
     const lines = state.tickets.map((t) => {
       const { typeLabel, horseLabel } = ticketLabel(t);
-      return `[${typeLabel}] ${horseLabel} ${formatMoney(t.amount)}円`;
+      return `[${typeLabel}] ${horseLabel} ${formatMoney(t.amount)}${unit}`;
     });
     el.ticketInfo.innerHTML = "購入済み馬券: " + lines.join(" / ");
   }
 
   function addHistoryRow(raceNumber, typeLabel, horseLabel, amount, resultText, payout) {
+    const unit = state.mode === "owner" ? "OP" : "円";
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td>第${raceNumber}R</td>
       <td>${typeLabel}</td>
       <td>${horseLabel}</td>
-      <td>${formatMoney(amount)}円</td>
+      <td>${formatMoney(amount)}${unit}</td>
       <td class="${payout > 0 ? "result-win" : "result-lose"}">${resultText}</td>
-      <td>${payout > 0 ? formatMoney(payout) + "円" : "-"}</td>
+      <td>${payout > 0 ? formatMoney(payout) + unit : "-"}</td>
     `;
     el.historyBody.prepend(tr);
   }
@@ -773,7 +895,15 @@
 
     state.weather = pickWeather();
     state.horses = generateHorses();
-    state.selectedHorseId = null;
+    if (state.mode === "owner") {
+      const ownerH = state.horses.find((h) => h.isOwnerHorse);
+      state.selectedHorseId = ownerH ? ownerH.id : null;
+      el.umarenOption.hidden = true;
+      if (el.betType.value === "umaren") el.betType.value = "win";
+    } else {
+      state.selectedHorseId = null;
+      el.umarenOption.hidden = false;
+    }
     state.selectedHorseIds = [];
     state.tickets = [];
     state.raceRunning = false;
@@ -783,7 +913,7 @@
     clearCommentary();
     resetZoom();
     el.raceNumber.textContent = state.raceNumber;
-    el.raceClass.textContent = getRaceClass(state.raceNumber).name;
+    el.raceClass.textContent = currentRaceClass().name;
     el.startBtn.disabled = true;
     el.watchOnlyBtn.disabled = false;
     el.skipBtn.disabled = true;
@@ -800,16 +930,29 @@
   }
 
   function showGameOver() {
-    el.raceMessage.textContent = `所持金が最低購入額（${MIN_BET}円）を下回りました。ゲームオーバーです。`;
+    const isOwner = state.mode === "owner";
+    el.raceMessage.textContent = isOwner
+      ? `所持OPが最低購入額（${MIN_BET}OP）を下回りました。ゲームオーバーです。`
+      : `所持金が最低購入額（${MIN_BET}円）を下回りました。ゲームオーバーです。`;
     el.buyBtn.disabled = true;
     el.startBtn.disabled = true;
     el.watchOnlyBtn.disabled = true;
     el.skipBtn.disabled = true;
     el.nextBtn.disabled = true;
     el.restartBtn.hidden = false;
+    el.restartBtn.textContent = isOwner ? "新しい馬で再挑戦" : "ゲームをリスタート";
   }
 
   function restartGame() {
+    if (state.mode === "owner") {
+      state.ownerHorse = null;
+      state.balance = OWNER_START_TOKENS;
+      saveOwnerState();
+      el.gameScreen.hidden = true;
+      el.restartBtn.hidden = true;
+      showOwnerCreateScreen();
+      return;
+    }
     state.balance = START_BALANCE;
     state.raceNumber = 1;
     state.attemptRaceCount = 0;
@@ -833,13 +976,14 @@
 
   function buyTicket() {
     const betType = el.betType.value;
+    const currencyUnit = state.mode === "owner" ? "OP" : "円";
     const amount = parseInt(el.betAmount.value, 10);
     if (!Number.isFinite(amount) || amount < MIN_BET) {
-      alert(`最低${MIN_BET}円から購入できます`);
+      alert(`最低${MIN_BET}${currencyUnit}から購入できます`);
       return;
     }
     if (amount > state.balance && state.mode !== "infinite") {
-      alert("所持金が不足しています");
+      alert(state.mode === "owner" ? "所持OPが不足しています" : "所持金が不足しています");
       return;
     }
 
@@ -897,6 +1041,14 @@
       let mult = 1.0;
       if (category === "high") mult = isFrontThisRace ? 0.85 : 1.15;
       else if (category === "low") mult = isFrontThisRace ? 1.2 : 0.9;
+
+      // 馬主モードの自厩馬は瞬発力が「後方からの追い上げ」に効く
+      if (!isFrontThisRace && state.mode === "owner" && state.ownerHorse) {
+        const h = state.horses.find((hh) => hh.id === r.id);
+        if (h && h.isOwnerHorse) {
+          mult *= 1 + ((state.ownerHorse.stats.kick - 50) / 100) * 0.5;
+        }
+      }
       multiplierById.set(r.id, mult);
     });
 
@@ -906,14 +1058,21 @@
   function computeFinishOrder() {
     const heartbeat = state.horses.find((h) => h.isHeartbeat);
     const frontier = state.horses.find((h) => h.isFrontier);
-    const { varMin, varMax } = getRaceClass(state.raceNumber);
+    const { varMin, varMax } = currentRaceClass();
     const pace = simulatePace();
     state.lastPaceInfo = pace;
     const contenders = state.horses.filter((h) => h !== heartbeat && h !== frontier);
-    const performances = contenders.map((h) => ({
-      id: h.id,
-      score: h.trueStrength * (varMin + Math.random() * (varMax - varMin)) * pace.multiplierById.get(h.id),
-    }));
+    const performances = contenders.map((h) => {
+      // 馬主モードの自厩馬は勝負根性が「終盤の粘り」＝結果のブレの下限を引き上げる
+      let effVarMin = varMin;
+      if (h.isOwnerHorse && state.ownerHorse) {
+        effVarMin = varMin + (state.ownerHorse.stats.guts / 100) * (1 - varMin) * 0.6;
+      }
+      return {
+        id: h.id,
+        score: h.trueStrength * (effVarMin + Math.random() * (varMax - effVarMin)) * pace.multiplierById.get(h.id),
+      };
+    });
     performances.sort((a, b) => b.score - a.score);
     const freeOrder = performances.map((p) => p.id);
 
@@ -1033,11 +1192,27 @@
     state.balance += totalPayout;
     renderBalance();
 
+    const currencyUnit = state.mode === "owner" ? "OP" : "円";
     if (totalPayout > 0) {
-      el.raceMessage.textContent += ` 払戻合計 ${formatMoney(totalPayout)}円！`;
+      el.raceMessage.textContent += ` 払戻合計 ${formatMoney(totalPayout)}${currencyUnit}！`;
     }
 
-    if (state.mode && state.mode !== "normal") {
+    if (state.mode === "owner" && state.ownerHorse) {
+      const ownerH = state.horses.find((h) => h.isOwnerHorse);
+      const ownerRank = ownerH ? rankById.get(ownerH.id) : null;
+      if (ownerRank === 1) {
+        state.ownerHorse.wins++;
+        if (state.ownerHorse.classIndex < OWNER_CLASSES.length - 1) {
+          state.ownerHorse.classIndex++;
+          el.raceMessage.textContent += ` 🎉クラス昇級！次走は${OWNER_CLASSES[state.ownerHorse.classIndex].name}！`;
+        } else if (!state.ownerHorse.cleared) {
+          state.ownerHorse.cleared = true;
+          el.raceMessage.textContent += ` 🏆👑重賞制覇！${state.ownerHorse.name}、殿堂入りです！`;
+        }
+      }
+      updateModeInfo();
+      saveOwnerState();
+    } else if (state.mode && state.mode !== "normal") {
       state.attemptRaceCount++;
       if (state.goalAmount && !state.goalAchieved && state.balance >= state.goalAmount) {
         state.goalAchieved = true;
@@ -1055,8 +1230,13 @@
   }
 
   function nextRace() {
-    // 1日は12レース制。12レースが終わったら1レースに戻る
-    state.raceNumber = state.raceNumber >= NUM_RACES_PER_DAY ? 1 : state.raceNumber + 1;
+    if (state.mode === "owner") {
+      // 馬主モードは通算レース数として使う（12レース制の対象外）
+      state.raceNumber += 1;
+    } else {
+      // 1日は12レース制。12レースが終わったら1レースに戻る
+      state.raceNumber = state.raceNumber >= NUM_RACES_PER_DAY ? 1 : state.raceNumber + 1;
+    }
     resetForNewRace();
   }
 
@@ -1092,9 +1272,190 @@
     }
     state.mode = null;
     el.gameScreen.hidden = true;
+    el.ownerCreateScreen.hidden = true;
+    el.ownerStableModal.hidden = true;
     el.lobbyScreen.hidden = false;
     el.lobbyReturnBtn.hidden = true;
+    el.ownerStableBtn.hidden = true;
     el.modeInfo.hidden = true;
+    document.querySelector(".app").classList.remove("owner-theme");
+  }
+
+  // ===== 馬主モード =====
+
+  function saveOwnerState() {
+    try {
+      localStorage.setItem(
+        OWNER_SAVE_KEY,
+        JSON.stringify({
+          ownerHorse: state.ownerHorse,
+          balance: state.balance,
+          raceNumber: state.raceNumber,
+        })
+      );
+    } catch (e) {
+      // localStorage unavailable（プライベートモード等）は無視する
+    }
+  }
+
+  function loadOwnerState() {
+    try {
+      const raw = localStorage.getItem(OWNER_SAVE_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function updateStatSliderDisplay() {
+    let speed = parseInt(el.statSpeed.value, 10);
+    speed = clamp(speed, OWNER_STAT_MIN, OWNER_STAT_TOTAL - OWNER_STAT_MIN * 2);
+    el.statSpeed.value = speed;
+
+    const kickMax = OWNER_STAT_TOTAL - speed - OWNER_STAT_MIN;
+    el.statKick.max = kickMax;
+    let kick = parseInt(el.statKick.value, 10);
+    kick = clamp(kick, OWNER_STAT_MIN, kickMax);
+    el.statKick.value = kick;
+
+    const guts = OWNER_STAT_TOTAL - speed - kick;
+
+    el.statSpeedValue.textContent = speed;
+    el.statKickValue.textContent = kick;
+    el.statGutsValue.textContent = guts;
+    el.statGutsBar.style.width = `${(guts / OWNER_STAT_TOTAL) * 100}%`;
+  }
+
+  function renderOwnerJockeyList() {
+    el.ownerJockeyList.innerHTML = "";
+    el.ownerJockeyList.dataset.selectedJockey = "";
+    JOCKEY_POOL.forEach((j) => {
+      const div = document.createElement("div");
+      div.className = "owner-jockey-option";
+      div.innerHTML = `
+        <span class="owner-jockey-name">${j.name} <span class="rank-badge rank-${j.rank}">${j.rank}</span></span>
+        <span class="owner-jockey-cost">雇用費 ${OWNER_JOCKEY_HIRE_COST[j.rank]}OP</span>
+      `;
+      div.addEventListener("click", () => {
+        el.ownerJockeyList.querySelectorAll(".owner-jockey-option").forEach((d) => d.classList.remove("selected"));
+        div.classList.add("selected");
+        el.ownerJockeyList.dataset.selectedJockey = j.name;
+      });
+      el.ownerJockeyList.appendChild(div);
+    });
+  }
+
+  function showOwnerCreateScreen() {
+    el.lobbyScreen.hidden = true;
+    el.gameScreen.hidden = true;
+    el.ownerStableModal.hidden = true;
+    el.ownerCreateScreen.hidden = false;
+    el.lobbyReturnBtn.hidden = false;
+    el.ownerStableBtn.hidden = true;
+    el.ownerHorseName.value = "";
+    el.statSpeed.value = 50;
+    el.statKick.value = 50;
+    updateStatSliderDisplay();
+    renderOwnerJockeyList();
+    el.ownerCreateError.textContent = "";
+    document.querySelector(".app").classList.add("owner-theme");
+  }
+
+  function debutOwnerHorse() {
+    const name = el.ownerHorseName.value.trim();
+    if (!name) {
+      el.ownerCreateError.textContent = "馬名を入力してください";
+      return;
+    }
+    const jockeyName = el.ownerJockeyList.dataset.selectedJockey;
+    if (!jockeyName) {
+      el.ownerCreateError.textContent = "専属騎手を選択してください";
+      return;
+    }
+    const jockey = JOCKEY_POOL.find((j) => j.name === jockeyName);
+    const hireCost = OWNER_JOCKEY_HIRE_COST[jockey.rank];
+    if (hireCost > state.balance) {
+      el.ownerCreateError.textContent = "所持OPが不足しています";
+      return;
+    }
+
+    const speed = parseInt(el.statSpeed.value, 10);
+    const kick = parseInt(el.statKick.value, 10);
+    const guts = OWNER_STAT_TOTAL - speed - kick;
+
+    state.mode = "owner";
+    state.ownerHorse = {
+      name,
+      stats: { speed, kick, guts },
+      jockeyName: jockey.name,
+      jockeyRank: jockey.rank,
+      classIndex: 0,
+      wins: 0,
+      cleared: false,
+    };
+    state.balance -= hireCost;
+    state.raceNumber = 1;
+    saveOwnerState();
+
+    el.ownerCreateScreen.hidden = true;
+    el.gameScreen.hidden = false;
+    el.ownerStableBtn.hidden = false;
+    renderBalance();
+    updateModeInfo();
+    resetForNewRace();
+  }
+
+  function openStableModal() {
+    if (!state.ownerHorse) return;
+    const s = state.ownerHorse.stats;
+    el.ownerStableName.textContent = state.ownerHorse.name;
+    el.ownerStableSpeed.textContent = s.speed;
+    el.ownerStableKick.textContent = s.kick;
+    el.ownerStableGuts.textContent = s.guts;
+    el.ownerStableJockey.textContent = `騎手: ${state.ownerHorse.jockeyName}（${state.ownerHorse.jockeyRank}）`;
+    el.ownerStableClass.textContent = `クラス: ${OWNER_CLASSES[state.ownerHorse.classIndex].name}${
+      state.ownerHorse.cleared ? "（重賞制覇済み）" : ""
+    }`;
+    el.ownerStableRecord.textContent = `通算成績: ${state.ownerHorse.wins}勝`;
+    el.ownerStableTokens.textContent = `所持OP: ${formatMoney(state.balance)}OP`;
+    el.ownerStableModal.hidden = false;
+  }
+
+  function closeStableModal() {
+    el.ownerStableModal.hidden = true;
+  }
+
+  function retireOwnerHorse() {
+    if (!state.ownerHorse) return;
+    if (!confirm(`${state.ownerHorse.name}を引退させますか？（所持OPは引き継がれます）`)) return;
+    state.ownerHorse = null;
+    saveOwnerState();
+    closeStableModal();
+    el.gameScreen.hidden = true;
+    showOwnerCreateScreen();
+  }
+
+  function enterOwnerMode() {
+    const saved = loadOwnerState();
+    document.querySelector(".app").classList.add("owner-theme");
+    el.lobbyScreen.hidden = true;
+    el.lobbyReturnBtn.hidden = false;
+    state.mode = "owner";
+    if (saved && saved.ownerHorse) {
+      state.ownerHorse = saved.ownerHorse;
+      state.balance = typeof saved.balance === "number" ? saved.balance : OWNER_START_TOKENS;
+      state.raceNumber = saved.raceNumber || 1;
+      el.ownerCreateScreen.hidden = true;
+      el.gameScreen.hidden = false;
+      el.ownerStableBtn.hidden = false;
+      renderBalance();
+      updateModeInfo();
+      resetForNewRace();
+    } else {
+      state.ownerHorse = null;
+      state.balance = saved && typeof saved.balance === "number" ? saved.balance : OWNER_START_TOKENS;
+      showOwnerCreateScreen();
+    }
   }
 
   el.buyBtn.addEventListener("click", buyTicket);
@@ -1111,14 +1472,28 @@
     if (save) resumeGame(save);
   });
   el.betType.addEventListener("change", () => {
-    state.selectedHorseId = null;
+    if (state.mode === "owner") {
+      const ownerH = state.horses.find((h) => h.isOwnerHorse);
+      state.selectedHorseId = ownerH ? ownerH.id : null;
+    } else {
+      state.selectedHorseId = null;
+    }
     state.selectedHorseIds = [];
     renderHorseTable();
     renderComboPreview();
   });
   document.querySelectorAll(".mode-select-btn").forEach((btn) => {
-    btn.addEventListener("click", () => selectMode(btn.dataset.mode));
+    btn.addEventListener("click", () => {
+      if (btn.dataset.mode === "owner") enterOwnerMode();
+      else selectMode(btn.dataset.mode);
+    });
   });
+  el.statSpeed.addEventListener("input", updateStatSliderDisplay);
+  el.statKick.addEventListener("input", updateStatSliderDisplay);
+  el.ownerDebutBtn.addEventListener("click", debutOwnerHorse);
+  el.ownerStableBtn.addEventListener("click", openStableModal);
+  el.ownerStableCloseBtn.addEventListener("click", closeStableModal);
+  el.ownerRetireBtn.addEventListener("click", retireOwnerHorse);
 
   loadThemePreference();
   applyTheme();

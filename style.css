@@ -417,3 +417,224 @@ button:hover:not(:disabled) {
 
 [data-theme="light"] .result-win { color: #1e7d2e; }
 [data-theme="light"] .result-lose { color: #c62828; }
+
+/* ===== 馬主モード専用テーマ・画面 ===== */
+
+.owner-theme {
+  --bg-body-1: #241226;
+  --bg-body-2: #150a17;
+  --bg-panel: #2a1730;
+  --bg-track-section: #3a1f22;
+  --border-track-section: #6b2a2a;
+  --bg-card: #3a2140;
+  --border-card: #6b3f78;
+  --bg-input: #3a2140;
+  --border-input: #8a5a9a;
+  --border-table: #5a3a63;
+  --btn-bg: #d4af37;
+  --btn-text: #241226;
+  --accent-gold: #ffd76b;
+}
+
+[data-theme="light"] .owner-theme {
+  --bg-body-1: #f7ecf9;
+  --bg-body-2: #efd9f2;
+  --bg-panel: #ffffff;
+  --bg-track-section: #f3dede;
+  --border-track-section: #c98a8a;
+  --bg-card: #f5ecf7;
+  --border-card: #d7b8e0;
+  --bg-input: #ffffff;
+  --border-input: #b98ac4;
+  --border-table: #e0cbe6;
+  --accent-gold: #a3790b;
+}
+
+.owner-mode-card h3 { color: #e6a5f0; }
+.owner-theme .mode-card h3 { color: var(--accent-gold); }
+
+.owner-stable-btn {
+  background: var(--bg-card);
+  color: var(--text-main);
+  border: 1px solid var(--border-card);
+}
+
+.owner-create-screen {
+  background: var(--bg-panel);
+  border-radius: 10px;
+  padding: 24px;
+  margin-bottom: 20px;
+  max-width: 720px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.owner-create-intro {
+  color: var(--text-muted);
+  font-size: 0.9em;
+}
+
+.owner-name-label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 20px;
+  font-weight: bold;
+}
+
+.owner-name-label input {
+  font-size: 1.1em;
+  padding: 8px;
+}
+
+.owner-stat-sliders {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-bottom: 20px;
+}
+
+.owner-stat-row {
+  display: grid;
+  grid-template-columns: 1fr 40px;
+  grid-template-rows: auto auto;
+  gap: 4px 10px;
+  align-items: center;
+}
+
+.owner-stat-row label {
+  grid-column: 1 / 2;
+  font-weight: bold;
+}
+
+.owner-stat-desc {
+  font-weight: normal;
+  font-size: 0.8em;
+  color: var(--text-muted);
+}
+
+.owner-stat-row input[type="range"] {
+  grid-column: 1 / 2;
+  width: 100%;
+}
+
+.owner-stat-value {
+  grid-column: 2 / 3;
+  grid-row: 1 / 3;
+  text-align: right;
+  font-weight: bold;
+  font-size: 1.2em;
+  color: var(--accent-gold);
+}
+
+.owner-stat-bar-track {
+  grid-column: 1 / 2;
+  height: 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-input);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.owner-stat-bar-fill {
+  height: 100%;
+  background: var(--accent-gold);
+  width: 33%;
+}
+
+.owner-jockey-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.owner-jockey-option {
+  background: var(--bg-card);
+  border: 2px solid var(--border-card);
+  border-radius: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+  text-align: left;
+  color: var(--text-main);
+  font-size: 0.85em;
+}
+
+.owner-jockey-option.selected {
+  border-color: var(--accent-gold);
+  background: rgba(255, 215, 0, 0.12);
+}
+
+.owner-jockey-name {
+  font-weight: bold;
+  display: block;
+}
+
+.owner-jockey-cost {
+  color: var(--text-muted);
+  font-size: 0.85em;
+}
+
+.owner-create-footer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.owner-create-error {
+  color: #f66;
+  font-size: 0.85em;
+  min-height: 1.2em;
+}
+
+.owner-horse-row td {
+  background: rgba(255, 215, 0, 0.1);
+}
+
+.owner-badge {
+  font-size: 0.85em;
+  color: var(--accent-gold);
+  font-weight: bold;
+}
+
+.owner-stable-modal[hidden] {
+  display: none;
+}
+
+.owner-stable-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 20px;
+}
+
+.owner-stable-panel {
+  background: var(--bg-panel);
+  border-radius: 10px;
+  padding: 24px;
+  max-width: 420px;
+  width: 100%;
+}
+
+.owner-stable-stats {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 14px 0;
+  font-weight: bold;
+}
+
+.owner-stable-footer {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.owner-stable-footer button {
+  flex: 1;
+}
