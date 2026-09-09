@@ -31,7 +31,7 @@
     { name: "岩田望来", rank: "A" },
     { name: "松山弘平", rank: "A" },
     { name: "戸崎圭太", rank: "A" },
-    { name: "古川吉弘", rank: "A" },
+    { name: "古川吉洋", rank: "A" },
     { name: "丹内祐二", rank: "B" },
     { name: "鮫島克駿", rank: "B" },
     { name: "横山武史", rank: "B" },
