@@ -2,8 +2,16 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>BETTING DERBY</title>
+<meta name="description" content="ブラウザで遊べる馬券購入シミュレーションゲーム">
+<meta name="theme-color" content="#123822">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="BETTING DERBY">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -203,23 +211,34 @@
 
     <section class="history-section">
       <h2>購入履歴</h2>
-      <table class="history-table">
-        <thead>
-          <tr>
-            <th>レース</th>
-            <th>式別</th>
-            <th>馬名</th>
-            <th>金額</th>
-            <th>結果</th>
-            <th>払戻</th>
-          </tr>
-        </thead>
-        <tbody id="historyBody"></tbody>
-      </table>
+      <div class="table-scroll">
+        <table class="history-table">
+          <thead>
+            <tr>
+              <th>レース</th>
+              <th>式別</th>
+              <th>馬名</th>
+              <th>金額</th>
+              <th>結果</th>
+              <th>払戻</th>
+            </tr>
+          </thead>
+          <tbody id="historyBody"></tbody>
+        </table>
+      </div>
     </section>
   </div>
 </div>
 
 <script src="script.js"></script>
+<script>
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("service-worker.js").catch(() => {
+        // オフライン対応が使えなくても通常プレイには影響しないため、失敗は無視する
+      });
+    });
+  }
+</script>
 </body>
 </html>
