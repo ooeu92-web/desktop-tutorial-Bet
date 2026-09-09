@@ -112,6 +112,24 @@ body {
   margin-bottom: 8px;
 }
 
+.lobby-continue-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.lobby-continue-row .continue-btn {
+  margin-bottom: 0;
+}
+
+.fresh-start-btn {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border-input);
+}
+
 .lobby-screen {
   background: var(--bg-panel);
   border-radius: 10px;
@@ -366,6 +384,13 @@ body {
   gap: 14px;
   align-items: center;
   margin-top: 14px;
+}
+
+.race-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 10px 0 16px;
 }
 
 .bet-controls label {

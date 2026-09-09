@@ -150,9 +150,9 @@
   const OWNER_STAT_TOTAL = 150;
   const OWNER_STAT_MIN = 10;
   const OWNER_START_TOKENS = 3000;
-  const OWNER_JOCKEY_HIRE_COST = { S: 500, A: 250, B: 100, C: 30 };
+  const OWNER_JOCKEY_HIRE_COST = { S: 800, A: 400, B: 160, C: 50 };
   // 騎手ランクごとの「毎レース」固定依頼料（緊張感を出すための継続コスト）
-  const OWNER_JOCKEY_RACE_FEE = { S: 100, A: 50, B: 20, C: 8 };
+  const OWNER_JOCKEY_RACE_FEE = { S: 200, A: 100, B: 40, C: 15 };
   const OWNER_CLASSES = [
     { name: "未勝利", varMin: 0.5, varMax: 1.65 },
     { name: "1勝クラス", varMin: 0.68, varMax: 1.35 },
@@ -167,10 +167,10 @@
 
   // OPを消費してあらかじめ能力の仕上がった馬を購入できる馬市場
   const HORSE_MARKET = [
-    { rank: "C", statTotal: 165, price: 300 },
-    { rank: "B", statTotal: 190, price: 900 },
-    { rank: "A", statTotal: 220, price: 2000 },
-    { rank: "S", statTotal: 260, price: 4000 },
+    { rank: "C", statTotal: 165, price: 450 },
+    { rank: "B", statTotal: 190, price: 1300 },
+    { rank: "A", statTotal: 220, price: 2800 },
+    { rank: "S", statTotal: 260, price: 5500 },
   ];
 
   // OPアイテムショップ
@@ -179,7 +179,7 @@
       id: "peakCondition",
       name: "絶好調ドリンク",
       desc: "次のレース、愛馬が必ず絶好調になる",
-      price: 150,
+      price: 220,
     },
   ];
 
@@ -293,6 +293,7 @@
     surfaceToggleBtn: document.getElementById("surfaceToggleBtn"),
     themeToggleBtn: document.getElementById("themeToggleBtn"),
     continueBtn: document.getElementById("continueBtn"),
+    freshStartBtn: document.getElementById("freshStartBtn"),
     umarenOption: document.getElementById("umarenOption"),
     ownerStableBtn: document.getElementById("ownerStableBtn"),
     ownerCreateScreen: document.getElementById("ownerCreateScreen"),
@@ -336,6 +337,7 @@
     buyBtn: document.getElementById("buyBtn"),
     startBtn: document.getElementById("startBtn"),
     watchOnlyBtn: document.getElementById("watchOnlyBtn"),
+    stretchSkipBtn: document.getElementById("stretchSkipBtn"),
     skipBtn: document.getElementById("skipBtn"),
     nextBtn: document.getElementById("nextBtn"),
     restartBtn: document.getElementById("restartBtn"),
@@ -580,20 +582,25 @@
       el.modeInfo.textContent = `🐴 ${state.ownerHorse.name}（${cls}・通算${state.ownerHorse.wins}勝）${state.ownerHorse.cleared ? " 🏆殿堂入り" : ""}`;
       return;
     }
-    if (!state.mode || state.mode === "normal") {
+    if (!state.mode) {
       el.modeInfo.hidden = true;
       return;
     }
     el.modeInfo.hidden = false;
+    const recoveryRate = state.totalWagered > 0 ? (state.totalPayout / state.totalWagered) * 100 : 0;
+    const hitRate = state.totalTickets > 0 ? (state.totalHits / state.totalTickets) * 100 : 0;
+    const statsLabel = `回収率 ${recoveryRate.toFixed(1)}%／的中率 ${hitRate.toFixed(1)}%`;
     if (state.mode === "infinite") {
-      const recoveryRate = state.totalWagered > 0 ? (state.totalPayout / state.totalWagered) * 100 : 0;
-      const hitRate = state.totalTickets > 0 ? (state.totalHits / state.totalTickets) * 100 : 0;
-      el.modeInfo.textContent = `🎯 ${GAME_MODES.infinite.label}：回収率 ${recoveryRate.toFixed(1)}%／的中率 ${hitRate.toFixed(1)}%（${state.attemptRaceCount}レース経過）`;
+      el.modeInfo.textContent = `🎯 ${GAME_MODES.infinite.label}：${statsLabel}（${state.attemptRaceCount}レース経過）`;
+      return;
+    }
+    if (state.mode === "normal") {
+      el.modeInfo.textContent = `📊 ${GAME_MODES.normal.label}：${statsLabel}（${state.attemptRaceCount}レース経過）`;
       return;
     }
     const goalLabel = formatMoney(state.goalAmount) + "円";
     const status = state.goalAchieved ? "🎉達成済み" : `${state.attemptRaceCount}レース経過`;
-    el.modeInfo.textContent = `🎯 ${GAME_MODES[state.mode].label}：目標${goalLabel}（${status}）`;
+    el.modeInfo.textContent = `🎯 ${GAME_MODES[state.mode].label}：目標${goalLabel}（${status}）／${statsLabel}`;
   }
 
   function isUmarenMode() {
@@ -753,6 +760,12 @@
     el.trackSvg.classList.remove("zoomed");
   }
 
+  // レース進行のタイミング（totalTimeに対する割合）。「直線までスキップ」もこの値を共有する
+  const COMMENTARY_T1_FRACTION = 0.25;
+  const COMMENTARY_T2_FRACTION = 0.55;
+  const COMMENTARY_T3_FRACTION = 0.85;
+  const HOME_STRETCH_FRACTION = 0.65; // ズームイン＝直線入り口のタイミング
+
   // 直線（ホームストレート）に入ったタイミングでズームインし、迫力を出す
   function scheduleZoom(totalTime) {
     const midGeom = geometryAt(cruiseInset(4.5));
@@ -761,7 +774,7 @@
     el.trackSvg.style.transformOrigin = `${originX}% ${originY}%`;
     const zoomTimeout = setTimeout(() => {
       el.trackSvg.classList.add("zoomed");
-    }, totalTime * 650);
+    }, totalTime * HOME_STRETCH_FRACTION * 1000);
     state.commentaryTimeouts.push(zoomTimeout);
   }
 
@@ -779,11 +792,11 @@
         frontRunnerNames.length > 0
           ? `📢 スタートから${frontRunnerNames.slice(0, 2).join("・")}が先頭集団を形成！`
           : "📢 先頭を主張する馬がおらず、様子見の展開";
-    }, totalTime * 250);
+    }, totalTime * COMMENTARY_T1_FRACTION * 1000);
 
     const t2 = setTimeout(() => {
       el.commentary.textContent = PACE_COMMENTARY[pace.category];
-    }, totalTime * 550);
+    }, totalTime * COMMENTARY_T2_FRACTION * 1000);
 
     // 実況と映像の食い違いを防ぐため、宣言上の脚質ではなく
     // 「このレースで実際に先頭集団にいたか」で終盤の実況を決める
@@ -793,7 +806,7 @@
       el.commentary.textContent = winnerWasFrontRunner
         ? `📢 ${winner.name}が粘る！このまま押し切った！`
         : `📢 直線、${winner.name}が鋭く差してきた！`;
-    }, totalTime * 850);
+    }, totalTime * COMMENTARY_T3_FRACTION * 1000);
 
     state.commentaryTimeouts.push(t1, t2, t3);
   }
@@ -986,6 +999,7 @@
     el.raceClass.textContent = currentRaceClass().name;
     el.startBtn.disabled = true;
     el.watchOnlyBtn.disabled = false;
+    el.stretchSkipBtn.disabled = true;
     el.skipBtn.disabled = true;
     el.nextBtn.disabled = true;
     el.restartBtn.hidden = true;
@@ -1007,6 +1021,7 @@
     el.buyBtn.disabled = true;
     el.startBtn.disabled = true;
     el.watchOnlyBtn.disabled = true;
+    el.stretchSkipBtn.disabled = true;
     el.skipBtn.disabled = true;
     el.nextBtn.disabled = true;
     el.restartBtn.hidden = false;
@@ -1168,6 +1183,7 @@
     el.buyBtn.disabled = true;
     el.startBtn.disabled = true;
     el.watchOnlyBtn.disabled = true;
+    el.stretchSkipBtn.disabled = false;
     el.skipBtn.disabled = false;
     el.raceMessage.textContent = "レース中...";
 
@@ -1206,6 +1222,58 @@
     });
 
     finishRace(state.currentFinishOrder);
+  }
+
+  // 序盤〜中盤を早送りし、直線（ホームストレート）からを通常速度で見せる
+  function skipToStretch() {
+    if (!state.raceRunning || !state.currentFinishOrder) return;
+    if (state.raceTimeoutId !== null) {
+      clearTimeout(state.raceTimeoutId);
+      state.raceTimeoutId = null;
+    }
+    state.commentaryTimeouts.forEach((id) => clearTimeout(id));
+    state.commentaryTimeouts = [];
+
+    const finishOrder = state.currentFinishOrder;
+    const totalTime = RACE_BASE_TIME + (finishOrder.length - 1) * RACE_GAP_PER_RANK;
+    const tSkip = totalTime * HOME_STRETCH_FRACTION;
+
+    finishOrder.forEach((horseId, rank) => {
+      const runner = document.getElementById(`runner-${horseId}`);
+      const duration = RACE_BASE_TIME + rank * RACE_GAP_PER_RANK;
+      const pct = Math.min(100, (tSkip / duration) * 100);
+      const remaining = Math.max(0.3, duration - tSkip);
+      runner.style.transition = "none";
+      runner.style.offsetDistance = `${pct}%`;
+      // force reflow so the transition is picked up
+      void runner.getBoundingClientRect();
+      runner.style.transition = `offset-distance ${remaining}s linear`;
+      runner.style.offsetDistance = "100%";
+    });
+
+    el.trackSvg.classList.add("zoomed");
+    el.commentary.textContent = PACE_COMMENTARY[state.lastPaceInfo.category];
+
+    // 終盤の実況（元のタイムラインから直線入り以降の分だけ再スケジュールする）
+    const winner = state.horses.find((h) => h.id === finishOrder[0]);
+    const winnerWasFrontRunner = state.lastPaceInfo.frontRunnerIds.includes(winner.id);
+    const t3Delay = Math.max(0, (COMMENTARY_T3_FRACTION - HOME_STRETCH_FRACTION) * totalTime * 1000);
+    const t3 = setTimeout(() => {
+      el.commentary.textContent = winnerWasFrontRunner
+        ? `📢 ${winner.name}が粘る！このまま押し切った！`
+        : `📢 直線、${winner.name}が鋭く差してきた！`;
+    }, t3Delay);
+    state.commentaryTimeouts.push(t3);
+
+    el.startBtn.disabled = true;
+    el.watchOnlyBtn.disabled = true;
+    el.stretchSkipBtn.disabled = true;
+
+    const remainingTime = totalTime - tSkip;
+    state.raceTimeoutId = setTimeout(() => {
+      state.raceTimeoutId = null;
+      finishRace(finishOrder);
+    }, remainingTime * 1000 + 300);
   }
 
   function finishRace(finishOrder) {
@@ -1310,7 +1378,7 @@
       }
       updateModeInfo();
       saveOwnerState();
-    } else if (state.mode && state.mode !== "normal") {
+    } else if (state.mode) {
       state.attemptRaceCount++;
       if (state.goalAmount && !state.goalAchieved && state.balance >= state.goalAmount) {
         state.goalAchieved = true;
@@ -1322,6 +1390,7 @@
     el.nextBtn.disabled = false;
     el.buyBtn.disabled = true;
     el.watchOnlyBtn.disabled = true;
+    el.stretchSkipBtn.disabled = true;
     el.skipBtn.disabled = true;
     state.currentFinishOrder = null;
     saveGame();
@@ -1383,6 +1452,16 @@
     el.ownerStableBtn.hidden = true;
     el.modeInfo.hidden = true;
     document.querySelector(".app").classList.remove("owner-theme");
+    refreshLobbySaveButtons();
+  }
+
+  // ロビーの「続きから再開」「最初から始める」ボタンの表示・非表示を、実際のセーブ有無に合わせて更新する
+  function refreshLobbySaveButtons() {
+    const hasNormalSave = !!loadSavedGame();
+    const savedOwnerState = loadOwnerState();
+    const hasOwnerSave = !!(savedOwnerState && savedOwnerState.ownerHorse);
+    el.continueBtn.hidden = !hasNormalSave;
+    el.freshStartBtn.hidden = !(hasNormalSave || hasOwnerSave);
   }
 
   // ===== 馬主モード =====
@@ -1735,6 +1814,7 @@
   el.buyBtn.addEventListener("click", buyTicket);
   el.startBtn.addEventListener("click", runRace);
   el.watchOnlyBtn.addEventListener("click", startWatchOnly);
+  el.stretchSkipBtn.addEventListener("click", skipToStretch);
   el.skipBtn.addEventListener("click", skipRace);
   el.nextBtn.addEventListener("click", nextRace);
   el.restartBtn.addEventListener("click", restartGame);
@@ -1744,6 +1824,12 @@
   el.continueBtn.addEventListener("click", () => {
     const save = loadSavedGame();
     if (save) resumeGame(save);
+  });
+  el.freshStartBtn.addEventListener("click", () => {
+    if (!confirm("すべてのセーブデータ（通常モード・馬主モード）を削除し、最初から始めます。よろしいですか？")) return;
+    try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* ignore */ }
+    try { localStorage.removeItem(OWNER_SAVE_KEY); } catch (e) { /* ignore */ }
+    refreshLobbySaveButtons();
   });
   el.betType.addEventListener("change", () => {
     if (state.mode === "owner") {
@@ -1773,7 +1859,5 @@
 
   loadThemePreference();
   applyTheme();
-  if (loadSavedGame()) {
-    el.continueBtn.hidden = false;
-  }
+  refreshLobbySaveButtons();
 })();

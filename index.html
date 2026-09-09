@@ -24,7 +24,10 @@
 
   <section id="lobbyScreen" class="lobby-screen">
     <h2>モードを選択してください</h2>
-    <button id="continueBtn" class="continue-btn" hidden>▶ 続きから再開</button>
+    <div class="lobby-continue-row">
+      <button id="continueBtn" class="continue-btn" hidden>▶ 続きから再開</button>
+      <button id="freshStartBtn" class="fresh-start-btn" hidden>🆕 最初から始める（セーブ削除）</button>
+    </div>
     <div class="mode-cards">
       <div class="mode-card">
         <h3>一般人モード</h3>
@@ -148,6 +151,16 @@
 
     <section class="betting-section">
       <h2>第<span id="raceNumber">1</span>レース <span id="raceClass" class="race-class-badge">未勝利</span> 出走表</h2>
+
+      <div class="race-controls">
+        <button id="startBtn" disabled>レーススタート</button>
+        <button id="watchOnlyBtn">馬券を買わず観戦</button>
+        <button id="stretchSkipBtn" disabled>直線までスキップ</button>
+        <button id="skipBtn" disabled>結果までスキップ</button>
+        <button id="nextBtn" disabled>次のレースへ</button>
+        <button id="restartBtn" hidden>ゲームをリスタート</button>
+      </div>
+
       <div class="table-scroll">
         <table class="horse-table">
           <thead>
@@ -182,11 +195,6 @@
           <input type="number" id="betAmount" value="100" min="100" step="100">
         </label>
         <button id="buyBtn">馬券購入</button>
-        <button id="startBtn" disabled>レーススタート</button>
-        <button id="watchOnlyBtn">馬券を買わず観戦</button>
-        <button id="skipBtn" disabled>スキップ</button>
-        <button id="nextBtn" disabled>次のレースへ</button>
-        <button id="restartBtn" hidden>ゲームをリスタート</button>
       </div>
 
       <div id="comboPreview" class="combo-preview"></div>
