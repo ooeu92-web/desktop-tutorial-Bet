@@ -11,6 +11,8 @@
     "パープルレイン", "ゴールドラッシュ", "シルクロード", "ワイルドカード",
     "ネオンライト", "クリスタルウィング", "サウザンドドリーム", "レッドインパルス",
     "リーヅモピンフ", "ハラキリドライブ", "インパクトラッシュ",
+    "アストラルビート", "クイックシルバー", "バーニングソウル",
+    "ミラクルヴォイス", "ダイヤモンドクロス", "セイントグロリア",
   ];
 
   // 20レースに1回ほど現れる、必ず勝つ大穴の特別な馬
@@ -29,14 +31,20 @@
     { name: "岩田望来", rank: "A" },
     { name: "松山弘平", rank: "A" },
     { name: "戸崎圭太", rank: "A" },
+    { name: "古川吉洋", rank: "A" },
     { name: "丹内祐二", rank: "B" },
     { name: "鮫島克駿", rank: "B" },
     { name: "横山武史", rank: "B" },
     { name: "西村淳也", rank: "B" },
     { name: "横山和生", rank: "B" },
     { name: "荻野極", rank: "B" },
+    { name: "坂井瑠星", rank: "B" },
+    { name: "津村明秀", rank: "B" },
+    { name: "三浦皇成", rank: "B" },
+    { name: "M.デムーロ", rank: "B" },
     { name: "今村聖奈", rank: "C" },
-    { name: "坂井瑠星", rank: "C" },
+    { name: "丸山元気", rank: "C" },
+    { name: "菱田裕二", rank: "C" },
   ];
 
   // 出現率が極端に低い特別な騎手（毎レースの通常抽選とは別枠で判定する）
@@ -164,6 +172,22 @@
   ];
   const STAKES_WINS_FOR_GI = 2; // 重賞を何勝したらGIに挑戦できるか
   const OWNER_SAVE_KEY = "bettingDerbyOwnerSave_v1";
+  const DEFAULT_STABLE_NAME = "無名厩舎";
+
+  // クラスごとの1着賞金（OP）
+  const OWNER_CLASS_PRIZE = {
+    未勝利: 50,
+    "1勝クラス": 50,
+    "2勝クラス": 100,
+    "3勝クラス": 100,
+    オープン: 150,
+    重賞: 200,
+    GI: 500,
+  };
+
+  // 馬主モードの1回あたりの馬券購入上限（アイテムで一時的に引き上げ可能）
+  const OWNER_MAX_BET = 300;
+  const OWNER_MAX_BET_BOOSTED = 500;
 
   // OPを消費してあらかじめ能力の仕上がった馬を購入できる馬市場
   const HORSE_MARKET = [
@@ -180,6 +204,12 @@
       name: "絶好調ドリンク",
       desc: "次のレース、愛馬が必ず絶好調になる",
       price: 220,
+    },
+    {
+      id: "betCapBoost",
+      name: "資金限度アップ",
+      desc: `次のレースだけ、1回の購入上限が${OWNER_MAX_BET_BOOSTED}OPに上がる`,
+      price: 50,
     },
   ];
 
@@ -279,6 +309,8 @@
     lastPaceInfo: null,
     commentaryTimeouts: [],
     ownerHorse: null,
+    ownerStableName: "",
+    ownerBetCapBoostActive: false,
   };
 
   const el = {
@@ -298,6 +330,7 @@
     ownerStableBtn: document.getElementById("ownerStableBtn"),
     ownerCreateScreen: document.getElementById("ownerCreateScreen"),
     ownerHorseName: document.getElementById("ownerHorseName"),
+    ownerStableNameInput: document.getElementById("ownerStableNameInput"),
     statSpeed: document.getElementById("statSpeed"),
     statSpeedValue: document.getElementById("statSpeedValue"),
     statKick: document.getElementById("statKick"),
@@ -308,6 +341,9 @@
     ownerCreateError: document.getElementById("ownerCreateError"),
     ownerDebutBtn: document.getElementById("ownerDebutBtn"),
     ownerStableModal: document.getElementById("ownerStableModal"),
+    ownerStableNameDisplay: document.getElementById("ownerStableNameDisplay"),
+    ownerStableNameEditInput: document.getElementById("ownerStableNameEditInput"),
+    ownerStableNameSaveBtn: document.getElementById("ownerStableNameSaveBtn"),
     ownerStableName: document.getElementById("ownerStableName"),
     ownerStableSpeed: document.getElementById("ownerStableSpeed"),
     ownerStableKick: document.getElementById("ownerStableKick"),
@@ -334,6 +370,7 @@
     horseTableBody: document.getElementById("horseTableBody"),
     betType: document.getElementById("betType"),
     betAmount: document.getElementById("betAmount"),
+    betLimitHint: document.getElementById("betLimitHint"),
     buyBtn: document.getElementById("buyBtn"),
     startBtn: document.getElementById("startBtn"),
     watchOnlyBtn: document.getElementById("watchOnlyBtn"),
@@ -578,8 +615,8 @@
         return;
       }
       el.modeInfo.hidden = false;
-      const cls = OWNER_CLASSES[state.ownerHorse.classIndex].name;
-      el.modeInfo.textContent = `🐴 ${state.ownerHorse.name}（${cls}・通算${state.ownerHorse.wins}勝）${state.ownerHorse.cleared ? " 🏆殿堂入り" : ""}`;
+      const stableName = state.ownerStableName || DEFAULT_STABLE_NAME;
+      el.modeInfo.textContent = `🏠 ${stableName}／🐴 ${state.ownerHorse.name}（通算${state.ownerHorse.wins}勝）${state.ownerHorse.cleared ? " 🏆殿堂入り" : ""}`;
       return;
     }
     if (!state.mode) {
@@ -812,12 +849,21 @@
   }
 
   function renderMyResult(finishOrder) {
+    const rankById = new Map();
+    finishOrder.forEach((id, idx) => rankById.set(id, idx + 1));
+
     if (state.tickets.length === 0) {
+      // 馬主モードは馬券を買っていなくても、自分の馬の着順は常に表示する
+      if (state.mode === "owner" && state.ownerHorse) {
+        const ownerH = state.horses.find((h) => h.isOwnerHorse);
+        if (ownerH) {
+          el.myResultInfo.textContent = `あなたの馬の着順: ${ownerH.name}: ${rankById.get(ownerH.id)}着`;
+          return;
+        }
+      }
       el.myResultInfo.textContent = "";
       return;
     }
-    const rankById = new Map();
-    finishOrder.forEach((id, idx) => rankById.set(id, idx + 1));
     const seen = new Set();
     const lines = [];
     state.tickets.forEach((ticket) => {
@@ -969,6 +1015,24 @@
     el.historyBody.prepend(tr);
   }
 
+  // 馬主モードの現在の馬券購入上限（アイテムで一時的に引き上げられていればそちらを返す）
+  function ownerMaxBet() {
+    return state.ownerBetCapBoostActive ? OWNER_MAX_BET_BOOSTED : OWNER_MAX_BET;
+  }
+
+  // 馬主モードの購入上限表示を、そのレースで既に購入した合計額に応じて更新する
+  function updateBetLimitHint() {
+    if (state.mode !== "owner") {
+      el.betLimitHint.textContent = "";
+      return;
+    }
+    const alreadyWagered = state.tickets.reduce((sum, t) => sum + t.amount, 0);
+    const remaining = Math.max(0, ownerMaxBet() - alreadyWagered);
+    el.betLimitHint.textContent = `（1レース合計上限 ${ownerMaxBet()}OP／残り購入可能額 ${remaining}OP${
+      state.ownerBetCapBoostActive ? "・ブースト中" : ""
+    }）`;
+  }
+
   function resetForNewRace() {
     if (state.mode !== "infinite" && state.balance < MIN_BET) {
       showGameOver();
@@ -982,13 +1046,20 @@
       state.selectedHorseId = ownerH ? ownerH.id : null;
       el.umarenOption.hidden = true;
       if (el.betType.value === "umaren") el.betType.value = "win";
-      if (state.ownerHorse) state.ownerHorse.nextConditionBoost = false;
+      if (state.ownerHorse) {
+        state.ownerHorse.nextConditionBoost = false;
+        state.ownerBetCapBoostActive = !!state.ownerHorse.nextBetCapBoost;
+        state.ownerHorse.nextBetCapBoost = false;
+      }
+      el.betAmount.max = String(ownerMaxBet());
     } else {
       state.selectedHorseId = null;
       el.umarenOption.hidden = false;
+      el.betAmount.removeAttribute("max");
     }
     state.selectedHorseIds = [];
     state.tickets = [];
+    updateBetLimitHint();
     state.raceRunning = false;
     state.raceFinished = false;
     el.raceMessage.textContent = "馬を選んで馬券を購入してください";
@@ -1071,6 +1142,14 @@
       alert(state.mode === "owner" ? "所持OPが不足しています" : "所持金が不足しています");
       return;
     }
+    if (state.mode === "owner") {
+      const alreadyWagered = state.tickets.reduce((sum, t) => sum + t.amount, 0);
+      const remaining = ownerMaxBet() - alreadyWagered;
+      if (amount > remaining) {
+        alert(`馬主モードでは1レースの購入合計上限は${ownerMaxBet()}OPです（残り購入可能額: ${Math.max(0, remaining)}OP）`);
+        return;
+      }
+    }
 
     if (betType === "umaren") {
       if (state.selectedHorseIds.length !== 2) {
@@ -1098,6 +1177,7 @@
     renderBalance();
     renderTicketInfo();
     updateBuyAvailability();
+    updateBetLimitHint();
     el.startBtn.disabled = false;
     saveGame();
   }
@@ -1354,6 +1434,12 @@
       }
 
       if (ownerRank === 1) {
+        const prize = OWNER_CLASS_PRIZE[raceClassName] || 0;
+        if (prize > 0) {
+          state.balance += prize;
+          renderBalance();
+          el.raceMessage.textContent += ` 💰賞金 ${prize}OP獲得！`;
+        }
         state.ownerHorse.wins++;
         const classIdx = state.ownerHorse.classIndex;
         if (raceClassName === "重賞") {
@@ -1474,6 +1560,7 @@
           ownerHorse: state.ownerHorse,
           balance: state.balance,
           raceNumber: state.raceNumber,
+          stableName: state.ownerStableName,
         })
       );
     } catch (e) {
@@ -1537,6 +1624,7 @@
     el.lobbyReturnBtn.hidden = false;
     el.ownerStableBtn.hidden = true;
     el.ownerHorseName.value = "";
+    el.ownerStableNameInput.value = state.ownerStableName || "";
     el.statSpeed.value = 50;
     el.statKick.value = 50;
     updateStatSliderDisplay();
@@ -1567,6 +1655,9 @@
     const kick = parseInt(el.statKick.value, 10);
     const guts = OWNER_STAT_TOTAL - speed - kick;
 
+    const stableNameInput = el.ownerStableNameInput.value.trim();
+    if (stableNameInput) state.ownerStableName = stableNameInput;
+
     state.mode = "owner";
     state.ownerHorse = {
       name,
@@ -1580,6 +1671,7 @@
       recentResults: [],
       raceLog: [],
       nextConditionBoost: false,
+      nextBetCapBoost: false,
     };
     state.balance -= hireCost;
     state.raceNumber = 1;
@@ -1608,6 +1700,8 @@
   function openStableModal() {
     if (!state.ownerHorse) return;
     const s = state.ownerHorse.stats;
+    el.ownerStableNameDisplay.textContent = `厩舎: ${state.ownerStableName || DEFAULT_STABLE_NAME}`;
+    el.ownerStableNameEditInput.value = state.ownerStableName || "";
     el.ownerStableName.textContent = state.ownerHorse.name;
     el.ownerStableSpeed.textContent = s.speed;
     el.ownerStableKick.textContent = s.kick;
@@ -1628,6 +1722,14 @@
 
   function closeStableModal() {
     el.ownerStableModal.hidden = true;
+  }
+
+  function saveStableName() {
+    const name = el.ownerStableNameEditInput.value.trim();
+    state.ownerStableName = name;
+    el.ownerStableNameDisplay.textContent = `厩舎: ${state.ownerStableName || DEFAULT_STABLE_NAME}`;
+    updateModeInfo();
+    saveOwnerState();
   }
 
   // 厩舎モーダルから専属騎手をいつでも変更できる（毎レースの依頼料はランクに応じて変動する）
@@ -1675,10 +1777,16 @@
       .join("");
   }
 
+  function isOwnerItemActive(item) {
+    if (item.id === "peakCondition") return !!state.ownerHorse.nextConditionBoost;
+    if (item.id === "betCapBoost") return !!state.ownerHorse.nextBetCapBoost;
+    return false;
+  }
+
   function renderOwnerItemShop() {
     if (!state.ownerHorse) return;
     el.ownerItemShop.innerHTML = OWNER_ITEMS.map((item) => {
-      const active = item.id === "peakCondition" && state.ownerHorse.nextConditionBoost;
+      const active = isOwnerItemActive(item);
       const disabled = active || state.balance < item.price;
       return `
         <div class="owner-item-row">
@@ -1695,13 +1803,14 @@
   function buyOwnerItem(itemId) {
     const item = OWNER_ITEMS.find((i) => i.id === itemId);
     if (!item || !state.ownerHorse) return;
-    if (item.id === "peakCondition" && state.ownerHorse.nextConditionBoost) return;
+    if (isOwnerItemActive(item)) return;
     if (state.balance < item.price) {
       alert("所持OPが不足しています");
       return;
     }
     state.balance -= item.price;
     if (item.id === "peakCondition") state.ownerHorse.nextConditionBoost = true;
+    if (item.id === "betCapBoost") state.ownerHorse.nextBetCapBoost = true;
     renderBalance();
     saveOwnerState();
     el.ownerStableTokens.textContent = `所持OP: ${formatMoney(state.balance)}OP`;
@@ -1764,6 +1873,7 @@
       recentResults: [],
       raceLog: [],
       nextConditionBoost: false,
+      nextBetCapBoost: false,
     };
     saveOwnerState();
     closeMarketModal();
@@ -1789,6 +1899,7 @@
     el.lobbyScreen.hidden = true;
     el.lobbyReturnBtn.hidden = false;
     state.mode = "owner";
+    state.ownerStableName = (saved && saved.stableName) || "";
     if (saved && saved.ownerHorse) {
       state.ownerHorse = saved.ownerHorse;
       // 旧セーブ形式との互換性のため、新フィールドが無ければ補完する
@@ -1796,6 +1907,7 @@
       state.ownerHorse.raceLog = state.ownerHorse.raceLog || [];
       state.ownerHorse.stakesWins = state.ownerHorse.stakesWins || 0;
       state.ownerHorse.nextConditionBoost = !!state.ownerHorse.nextConditionBoost;
+      state.ownerHorse.nextBetCapBoost = !!state.ownerHorse.nextBetCapBoost;
       state.balance = typeof saved.balance === "number" ? saved.balance : OWNER_START_TOKENS;
       state.raceNumber = saved.raceNumber || 1;
       el.ownerCreateScreen.hidden = true;
@@ -1853,6 +1965,7 @@
   el.ownerDebutBtn.addEventListener("click", debutOwnerHorse);
   el.ownerStableBtn.addEventListener("click", openStableModal);
   el.ownerStableCloseBtn.addEventListener("click", closeStableModal);
+  el.ownerStableNameSaveBtn.addEventListener("click", saveStableName);
   el.ownerRetireBtn.addEventListener("click", retireOwnerHorse);
   el.ownerMarketBtn.addEventListener("click", openMarketModal);
   el.ownerMarketCloseBtn.addEventListener("click", closeMarketModal);

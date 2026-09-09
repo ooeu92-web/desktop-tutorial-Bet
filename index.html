@@ -65,6 +65,11 @@
     <p class="owner-create-intro">馬の名前を決め、能力値を配分し、専属騎手を選んでください。能力値の合計は常に150で固定されています。</p>
 
     <label class="owner-name-label">
+      厩舎名（任意）
+      <input type="text" id="ownerStableNameInput" maxlength="16" placeholder="例：グリーンファーム">
+    </label>
+
+    <label class="owner-name-label">
       馬名
       <input type="text" id="ownerHorseName" maxlength="12" placeholder="例：マイフレンド">
     </label>
@@ -98,6 +103,7 @@
 
   <div id="ownerStableModal" class="owner-stable-modal" hidden>
     <div class="owner-stable-panel">
+      <p id="ownerStableNameDisplay" class="owner-stable-name-display">厩舎: -</p>
       <h2 id="ownerStableName">-</h2>
       <div class="owner-stable-stats">
         <div>スピード <span id="ownerStableSpeed">-</span></div>
@@ -108,6 +114,14 @@
       <p id="ownerStableClass">クラス: -</p>
       <p id="ownerStableRecord">通算成績: -</p>
       <p id="ownerStableTokens">所持OP: -</p>
+
+      <div class="owner-stable-section">
+        <h3>厩舎名の変更</h3>
+        <div class="owner-stable-name-edit">
+          <input type="text" id="ownerStableNameEditInput" maxlength="16" placeholder="厩舎名">
+          <button id="ownerStableNameSaveBtn">変更する</button>
+        </div>
+      </div>
 
       <div class="owner-stable-section">
         <h3>騎手変更</h3>
@@ -201,6 +215,7 @@
         <label>
           金額
           <input type="number" id="betAmount" value="100" min="100" step="100">
+          <span id="betLimitHint" class="bet-limit-hint"></span>
         </label>
         <button id="buyBtn">馬券購入</button>
       </div>
