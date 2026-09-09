@@ -216,6 +216,7 @@
     raceTimeoutId: null,
     currentFinishOrder: null,
     lastPaceInfo: null,
+    commentaryTimeouts: [],
   };
 
   const el = {
@@ -231,6 +232,7 @@
     trackSvg: document.getElementById("trackSvg"),
     raceMessage: document.getElementById("raceMessage"),
     myResultInfo: document.getElementById("myResultInfo"),
+    commentary: document.getElementById("commentary"),
     horseTableBody: document.getElementById("horseTableBody"),
     betType: document.getElementById("betType"),
     betAmount: document.getElementById("betAmount"),
@@ -543,6 +545,48 @@
     el.trackSvg.innerHTML = buildTrackDefs() + buildTrackBackground() + buildHorseMarkers();
   }
 
+  const PACE_COMMENTARY = {
+    high: "📢 ハイペースの流れ！後半に脚を使う馬が出てきそうだ",
+    low: "📢 スローペースの落ち着いた流れ。前の馬に有利な展開か",
+    medium: "📢 落ち着いたミドルペースの展開",
+  };
+
+  function clearCommentary() {
+    state.commentaryTimeouts.forEach((id) => clearTimeout(id));
+    state.commentaryTimeouts = [];
+    el.commentary.textContent = "";
+  }
+
+  // レース経過に合わせて、先頭集団・展開・終盤の攻防を実況する
+  function scheduleCommentary(finishOrder, pace) {
+    clearCommentary();
+    const totalTime = RACE_BASE_TIME + (finishOrder.length - 1) * RACE_GAP_PER_RANK;
+
+    const frontRunnerNames = state.horses
+      .filter((h) => pace.frontRunnerIds.includes(h.id))
+      .map((h) => h.name);
+    const t1 = setTimeout(() => {
+      el.commentary.textContent =
+        frontRunnerNames.length > 0
+          ? `📢 スタートから${frontRunnerNames.slice(0, 2).join("・")}が先頭集団を形成！`
+          : "📢 先頭を主張する馬がおらず、様子見の展開";
+    }, totalTime * 250);
+
+    const t2 = setTimeout(() => {
+      el.commentary.textContent = PACE_COMMENTARY[pace.category];
+    }, totalTime * 550);
+
+    const winner = state.horses.find((h) => h.id === finishOrder[0]);
+    const isCloserWin = winner.runningStyle === "sashi" || winner.runningStyle === "oikomi";
+    const t3 = setTimeout(() => {
+      el.commentary.textContent = isCloserWin
+        ? `📢 直線、${winner.name}が鋭く差してきた！`
+        : `📢 ${winner.name}が粘る！このまま押し切るか`;
+    }, totalTime * 850);
+
+    state.commentaryTimeouts = [t1, t2, t3];
+  }
+
   function renderMyResult(finishOrder) {
     if (state.tickets.length === 0) {
       el.myResultInfo.textContent = "";
@@ -631,6 +675,7 @@
     state.raceFinished = false;
     el.raceMessage.textContent = "馬を選んで馬券を購入してください";
     el.myResultInfo.textContent = "";
+    clearCommentary();
     el.raceNumber.textContent = state.raceNumber;
     el.raceClass.textContent = getRaceClass(state.raceNumber).name;
     el.startBtn.disabled = true;
@@ -737,15 +782,17 @@
     else if (frontCount <= PACE_LOW_COUNT) category = "low";
 
     const multiplierById = new Map();
+    const frontRunnerIds = [];
     rolls.forEach((r) => {
       const isFrontThisRace = r.value >= PACE_CONTEST_THRESHOLD;
+      if (isFrontThisRace) frontRunnerIds.push(r.id);
       let mult = 1.0;
       if (category === "high") mult = isFrontThisRace ? 0.85 : 1.15;
       else if (category === "low") mult = isFrontThisRace ? 1.2 : 0.9;
       multiplierById.set(r.id, mult);
     });
 
-    return { category, frontCount, multiplierById };
+    return { category, frontCount, multiplierById, frontRunnerIds };
   }
 
   function computeFinishOrder() {
@@ -786,6 +833,7 @@
 
     const finishOrder = computeFinishOrder();
     state.currentFinishOrder = finishOrder;
+    scheduleCommentary(finishOrder, state.lastPaceInfo);
 
     finishOrder.forEach((horseId, rank) => {
       const runner = document.getElementById(`runner-${horseId}`);
@@ -823,6 +871,7 @@
   function finishRace(finishOrder) {
     state.raceRunning = false;
     state.raceFinished = true;
+    clearCommentary();
 
     const rankById = new Map();
     finishOrder.forEach((id, idx) => rankById.set(id, idx + 1));

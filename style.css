@@ -188,6 +188,15 @@ body {
   min-height: 1.2em;
 }
 
+.commentary {
+  text-align: center;
+  margin-top: 4px;
+  font-size: 0.95em;
+  font-style: italic;
+  color: #ffe066;
+  min-height: 1.3em;
+}
+
 .betting-section, .history-section {
   background: #1e1e1e;
   border-radius: 10px;
