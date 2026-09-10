@@ -138,12 +138,12 @@
   const MIN_BET = 100;
   const START_BALANCE = 10000;
   const NUM_HORSES = 8;
-  const PAYOUT_RATE = 0.8;
+  const TAKEOUT_RATE = 0.15; // 控除率（単勝・複勝・馬連共通）
+  const PAYOUT_RATE = 1 - TAKEOUT_RATE;
   const WIN_ODDS_MIN = 1.5;
   const WIN_ODDS_MAX = 120;
   const PLACE_ODDS_MIN = 1.2;
   const PLACE_ODDS_MAX = 25;
-  const PLACE_ODDS_DIVISOR = 3.5;
   const UMAREN_ODDS_MIN = 1.5;
   const UMAREN_ODDS_MAX = 300;
   const MAX_SINGLE_DIGIT_ODDS_HORSES = 5;
@@ -216,6 +216,19 @@
   // 隠しコマンド：この馬名＋騎手の組み合わせでデビューすると、全レース1倍台で勝利する
   const SECRET_HORSE_NAME = "イクイノックス";
   const SECRET_JOCKEY_NAME = "C.ルメール";
+
+  // 隠しコマンド：GI初出走に限り、単勝50倍で必ず勝利する
+  const WINCARNELIAN_HORSE_NAME = "ウインカーネリアン";
+  const WINCARNELIAN_JOCKEY_NAME = "三浦皇成";
+  const WINCARNELIAN_FIXED_ODDS = 50;
+
+  // 隠しコマンド：未勝利〜2勝クラスは単勝オッズだけ5〜15倍に固定され、
+  // 3勝クラスで5連続2・3着になった後、勝ち上がってオープン・重賞を連勝する
+  const SHAKE_HORSE_NAME = "シェイクユアハート";
+  const SHAKE_JOCKEY_NAME = "古川吉洋";
+  const SHAKE_ODDS_MIN = 5;
+  const SHAKE_ODDS_MAX = 15;
+  const SHAKE_STREAK_TARGET = 5;
 
   function styleFromSpeed(speed) {
     if (speed >= 75) return "nige";
@@ -429,13 +442,83 @@
     return 1 + centered / 7;
   }
 
+  // Harvilleモデルで各馬の「3着以内に入る確率」（複勝支持率）を強さから推定する。
+  // 単勝支持率のような単純な比例配分ではなく、上位を独占しがちな馬とそうでない
+  // 馬とで複勝への入りやすさの差が非線形になるため、単勝オッズとは独立した
+  // 複勝オッズが生まれる（人気薄が突っ込んだ時にオッズが単純比例よりも
+  // 高くなる／低くなることがある）。
+  function computePlaceProbabilities(strengths) {
+    const total = strengths.reduce((sum, h) => sum + h.s, 0);
+    const placeProb = new Map(strengths.map((h) => [h.id, 0]));
+
+    strengths.forEach((first) => {
+      placeProb.set(first.id, placeProb.get(first.id) + first.s / total);
+    });
+
+    strengths.forEach((first) => {
+      const pFirst = first.s / total;
+      const remAfterFirst = total - first.s;
+      strengths.forEach((second) => {
+        if (second.id === first.id) return;
+        const pSecondGivenFirst = second.s / remAfterFirst;
+        placeProb.set(second.id, placeProb.get(second.id) + pFirst * pSecondGivenFirst);
+
+        const remAfterSecond = remAfterFirst - second.s;
+        strengths.forEach((third) => {
+          if (third.id === first.id || third.id === second.id) return;
+          const pThirdGivenFirstSecond = third.s / remAfterSecond;
+          placeProb.set(
+            third.id,
+            placeProb.get(third.id) + pFirst * pSecondGivenFirst * pThirdGivenFirstSecond
+          );
+        });
+      });
+    });
+
+    return placeProb;
+  }
+
   function generateHorses() {
     const isOwnerRace = state.mode === "owner" && !!state.ownerHorse;
-    const isGIRace = isOwnerRace && currentRaceClass().name === "GI";
+    const ownerRaceClassName = isOwnerRace ? currentRaceClass().name : null;
+    const isGIRace = isOwnerRace && ownerRaceClassName === "GI";
     const isSecretHorse =
       isOwnerRace &&
       state.ownerHorse.name === SECRET_HORSE_NAME &&
       state.ownerHorse.jockeyName === SECRET_JOCKEY_NAME;
+
+    // ウインカーネリアン＋三浦皇成：GI初出走に限り単勝50倍で必ず勝利する
+    const isWincarnelianHorse =
+      isOwnerRace &&
+      state.ownerHorse.name === WINCARNELIAN_HORSE_NAME &&
+      state.ownerHorse.jockeyName === WINCARNELIAN_JOCKEY_NAME;
+    const isWincarnelianDebut = isWincarnelianHorse && isGIRace && (state.ownerHorse.giStarts || 0) === 0;
+    if (isWincarnelianHorse && isGIRace) {
+      state.ownerHorse.giStarts = (state.ownerHorse.giStarts || 0) + 1;
+    }
+
+    // シェイクユアハート＋古川吉洋：未勝利〜2勝クラスはオッズのみ特殊、
+    // 3勝クラスで5連続2・3着、その後オープン・重賞を連勝する
+    const isShakeHorse =
+      isOwnerRace &&
+      state.ownerHorse.name === SHAKE_HORSE_NAME &&
+      state.ownerHorse.jockeyName === SHAKE_JOCKEY_NAME;
+    const shakeOddsForced =
+      isShakeHorse && ["未勝利", "1勝クラス", "2勝クラス"].includes(ownerRaceClassName);
+    let shakeForcedRank = null;
+    let shakeForcedWin = false;
+    if (isShakeHorse && ownerRaceClassName === "3勝クラス") {
+      const streak = state.ownerHorse.shakeStreak || 0;
+      if (streak < SHAKE_STREAK_TARGET) {
+        shakeForcedRank = Math.random() < 0.5 ? 2 : 3;
+        state.ownerHorse.shakeStreak = streak + 1;
+      } else {
+        shakeForcedWin = true;
+      }
+    } else if (isShakeHorse && (ownerRaceClassName === "オープン" || ownerRaceClassName === "重賞")) {
+      shakeForcedWin = true;
+    }
+
     const ownerIndex = isOwnerRace ? Math.floor(Math.random() * NUM_HORSES) : -1;
     const aiCount = isOwnerRace ? NUM_HORSES - 1 : NUM_HORSES;
     const aiNames = shuffle(HORSE_POOL).slice(0, aiCount);
@@ -475,9 +558,15 @@
       const isHeartbeat = i === heartbeatIndex;
       const isFrontier = i === frontierIndex;
       const isOwnerHorse = i === ownerIndex;
-      const isSecretWinner = isOwnerHorse && isSecretHorse;
+      const isEquinoxWinner = isOwnerHorse && isSecretHorse;
+      const isWincarnelianWinner = isOwnerHorse && isWincarnelianDebut;
+      const isShakeForcedWinner = isOwnerHorse && shakeForcedWin;
+      const isSecretWinner = isEquinoxWinner || isWincarnelianWinner || isShakeForcedWinner;
+      const forcedRank = isOwnerHorse && shakeForcedRank ? shakeForcedRank : null;
+      const isShakeOddsForced = isOwnerHorse && shakeOddsForced;
       let base;
       if (isHeartbeat) base = 15 + Math.random() * 10;
+      else if (isWincarnelianWinner) base = 15 + Math.random() * 10; // 市場評価上は大穴に見せる
       else if (isOwnerHorse) base = 65 * (0.82 + (state.ownerHorse.stats.speed / 100) * 0.36);
       else base = 20 + Math.random() * 90;
 
@@ -530,10 +619,27 @@
       if (isHeartbeat) horseName = HEARTBEAT_NAME;
       else if (isFrontier) horseName = FRONTIER_NAME;
 
-      return { name: horseName, last3, jockey, runningStyle, condition, trueStrength, marketStrength, isHeartbeat, isFrontier, isOwnerHorse, isSecretWinner };
+      return {
+        name: horseName,
+        last3,
+        jockey,
+        runningStyle,
+        condition,
+        trueStrength,
+        marketStrength,
+        isHeartbeat,
+        isFrontier,
+        isOwnerHorse,
+        isSecretWinner,
+        isEquinoxWinner,
+        isWincarnelianWinner,
+        isShakeOddsForced,
+        forcedRank,
+      };
     });
 
     const marketSum = raw.reduce((s, h) => s + h.marketStrength, 0);
+    const placeProbById = computePlaceProbabilities(raw.map((h, i) => ({ id: i, s: h.marketStrength })));
 
     const horses = raw.map((h, i) => {
       const marketProb = h.marketStrength / marketSum;
@@ -541,10 +647,22 @@
       if (h.isHeartbeat) {
         oddsWin = Math.max(oddsWin, round1(HEARTBEAT_MIN_ODDS + Math.random() * 15));
       }
-      if (h.isSecretWinner) {
+      if (h.isEquinoxWinner) {
         oddsWin = round1(1.1 + Math.random() * 0.8);
       }
-      const oddsPlace = clamp(round1(1 + (oddsWin - 1) / PLACE_ODDS_DIVISOR), PLACE_ODDS_MIN, PLACE_ODDS_MAX);
+      if (h.isWincarnelianWinner) {
+        oddsWin = WINCARNELIAN_FIXED_ODDS;
+      }
+      if (h.isShakeOddsForced) {
+        oddsWin = round1(SHAKE_ODDS_MIN + Math.random() * (SHAKE_ODDS_MAX - SHAKE_ODDS_MIN));
+      }
+
+      // 複勝オッズは単勝オッズから逆算せず、複勝支持率から独立して算出する
+      const placeProb = placeProbById.get(i);
+      let oddsPlace = clamp(round1(PAYOUT_RATE / placeProb), PLACE_ODDS_MIN, PLACE_ODDS_MAX);
+      if (h.isEquinoxWinner) {
+        oddsPlace = round1(1.05 + Math.random() * 0.25);
+      }
       return {
         id: i + 1,
         lane: i + 1,
@@ -562,6 +680,8 @@
         isFrontier: h.isFrontier,
         isOwnerHorse: h.isOwnerHorse,
         isSecretWinner: h.isSecretWinner,
+        isShakeOddsForced: h.isShakeOddsForced,
+        forcedRank: h.forcedRank,
       };
     });
 
@@ -570,8 +690,9 @@
   }
 
   // 単勝オッズが1桁（10倍未満）になる馬は最大5頭までに制限する
+  // （複勝オッズは単勝支持率から逆算せず独立して決まるため、ここでは触れない）
   function enforceSingleDigitOddsCap(horses) {
-    const candidates = horses.filter((h) => !h.isHeartbeat && !h.isSecretWinner);
+    const candidates = horses.filter((h) => !h.isHeartbeat && !h.isSecretWinner && !h.isShakeOddsForced);
     const sortedByOdds = [...candidates].sort((a, b) => a.oddsWin - b.oddsWin);
     let singleDigitCount = 0;
     sortedByOdds.forEach((h) => {
@@ -579,7 +700,6 @@
         singleDigitCount++;
         if (singleDigitCount > MAX_SINGLE_DIGIT_ODDS_HORSES) {
           h.oddsWin = clamp(round1(10 + Math.random() * 10), 10, WIN_ODDS_MAX);
-          h.oddsPlace = clamp(round1(1 + (h.oddsWin - 1) / PLACE_ODDS_DIVISOR), PLACE_ODDS_MIN, PLACE_ODDS_MAX);
         }
       }
     });
@@ -1241,14 +1361,18 @@
   }
 
   function computeFinishOrder() {
-    // シークレット機能：イクイノックス＋C.ルメールの組み合わせは必ず1着になる
+    // シークレット機能：条件を満たすと必ず1着になる馬（複数の秘密条件が対象になりうる）
     const secretWinner = state.horses.find((h) => h.isSecretWinner);
     const heartbeat = !secretWinner ? state.horses.find((h) => h.isHeartbeat) : null;
     const frontier = state.horses.find((h) => h.isFrontier);
+    // シェイクユアハートの3勝クラス連続2・3着など、任意の着順を強制する仕組み
+    const forcedRankHorse = state.horses.find((h) => h.forcedRank && h !== secretWinner);
     const { varMin, varMax } = currentRaceClass();
     const pace = simulatePace();
     state.lastPaceInfo = pace;
-    const contenders = state.horses.filter((h) => h !== heartbeat && h !== frontier && h !== secretWinner);
+    const contenders = state.horses.filter(
+      (h) => h !== heartbeat && h !== frontier && h !== secretWinner && h !== forcedRankHorse
+    );
     const performances = contenders.map((h) => {
       // 馬主モードの自厩馬は勝負根性が「終盤の粘り」＝結果のブレの下限を引き上げる
       let effVarMin = varMin;
@@ -1266,7 +1390,10 @@
     const order = new Array(state.horses.length).fill(null);
     if (secretWinner) order[0] = secretWinner.id;
     else if (heartbeat) order[0] = heartbeat.id;
-    if (frontier) order[FRONTIER_FIXED_RANK - 1] = frontier.id;
+    if (frontier && order[FRONTIER_FIXED_RANK - 1] === null) order[FRONTIER_FIXED_RANK - 1] = frontier.id;
+    if (forcedRankHorse && order[forcedRankHorse.forcedRank - 1] === null) {
+      order[forcedRankHorse.forcedRank - 1] = forcedRankHorse.id;
+    }
 
     let freeIdx = 0;
     for (let i = 0; i < order.length; i++) {
@@ -1489,11 +1616,12 @@
             el.raceMessage.textContent += ` 🏆重賞制覇！（重賞${state.ownerHorse.stakesWins}勝）`;
           }
         } else if (raceClassName === "GI") {
+          state.ownerHorse.giWins = (state.ownerHorse.giWins || 0) + 1;
           if (!state.ownerHorse.cleared) {
             state.ownerHorse.cleared = true;
             el.raceMessage.textContent += ` 🏆👑GI制覇！${state.ownerHorse.name}、殿堂入りです！`;
           } else {
-            el.raceMessage.textContent += ` 🏆GI制覇！`;
+            el.raceMessage.textContent += ` 🏆GI制覇！（GI${state.ownerHorse.giWins}勝）`;
           }
         } else if (classIdx < OWNER_CLASSES.length - 1) {
           state.ownerHorse.classIndex++;
@@ -1706,6 +1834,9 @@
       wins: 0,
       cleared: false,
       stakesWins: 0,
+      giWins: 0,
+      giStarts: 0,
+      shakeStreak: 0,
       recentResults: [],
       raceLog: [],
       nextConditionBoost: false,
@@ -1750,7 +1881,9 @@
     el.ownerStableClass.textContent = `クラス: ${OWNER_CLASSES[state.ownerHorse.classIndex].name}${
       state.ownerHorse.cleared ? "（殿堂入り済み）" : ""
     }`;
-    el.ownerStableRecord.textContent = `通算成績: ${state.ownerHorse.wins}勝（重賞${state.ownerHorse.stakesWins || 0}勝）`;
+    const giWins = state.ownerHorse.giWins || 0;
+    const recordSuffix = giWins > 0 ? `（GI${giWins}勝）` : `（重賞${state.ownerHorse.stakesWins || 0}勝）`;
+    el.ownerStableRecord.textContent = `通算成績: ${state.ownerHorse.wins}勝${recordSuffix}`;
     el.ownerStableTokens.textContent = `所持OP: ${formatMoney(state.balance)}OP`;
     renderOwnerJockeyChangeList();
     renderOwnerRaceLog();
@@ -1908,6 +2041,9 @@
       wins: 0,
       cleared: false,
       stakesWins: 0,
+      giWins: 0,
+      giStarts: 0,
+      shakeStreak: 0,
       recentResults: [],
       raceLog: [],
       nextConditionBoost: false,
@@ -1944,6 +2080,9 @@
       state.ownerHorse.recentResults = state.ownerHorse.recentResults || [];
       state.ownerHorse.raceLog = state.ownerHorse.raceLog || [];
       state.ownerHorse.stakesWins = state.ownerHorse.stakesWins || 0;
+      state.ownerHorse.giWins = state.ownerHorse.giWins || 0;
+      state.ownerHorse.giStarts = state.ownerHorse.giStarts || 0;
+      state.ownerHorse.shakeStreak = state.ownerHorse.shakeStreak || 0;
       state.ownerHorse.nextConditionBoost = !!state.ownerHorse.nextConditionBoost;
       state.ownerHorse.nextBetCapBoost = !!state.ownerHorse.nextBetCapBoost;
       state.balance = typeof saved.balance === "number" ? saved.balance : OWNER_START_TOKENS;
